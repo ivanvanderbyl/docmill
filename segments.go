@@ -159,7 +159,7 @@ func buildSegmentsFromLine(line Line, hT float64) []Segment {
 
 		for i := 0; i < len(clusters)-1; i++ {
 			for j := i + 1; j < len(clusters); j++ {
-				dist := horizontalDistance(clusters[i].Box, clusters[j].Box)
+				dist := weightedEdgeDistance(clusters[i].Box, clusters[j].Box)
 				if dist < minDist {
 					minDist = dist
 					minI, minJ = i, j

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -45,6 +46,26 @@ func main() {
 				Usage:   "Enable processing time and statistics logging",
 				Value:   false,
 			},
+			&cli.BoolFlag{
+				Name:  "chunk",
+				Usage: "Output as JSON chunks instead of markdown",
+				Value: false,
+			},
+			&cli.IntFlag{
+				Name:  "chunk-max-tokens",
+				Usage: "Maximum tokens per chunk",
+				Value: 512,
+			},
+			&cli.IntFlag{
+				Name:  "chunk-overlap",
+				Usage: "Number of overlap tokens between chunks",
+				Value: 0,
+			},
+			&cli.BoolFlag{
+				Name:  "chunk-repeat-headings",
+				Usage: "Repeat heading hierarchy at the start of each chunk",
+				Value: false,
+			},
 		},
 		Action: convertPDF,
 	}
@@ -60,8 +81,11 @@ func convertPDF(_ context.Context, cmd *cli.Command) error {
 	startPage := cmd.Int("start-page")
 	endPage := cmd.Int("end-page")
 	enableMetrics := cmd.Bool("metrics")
+	chunkMode := cmd.Bool("chunk")
+	chunkMaxTokens := cmd.Int("chunk-max-tokens")
+	chunkOverlap := cmd.Int("chunk-overlap")
+	chunkRepeatHeadings := cmd.Bool("chunk-repeat-headings")
 
-	// Initialise pdfium
 	pool, err := webassembly.Init(webassembly.Config{
 		MinIdle:  1,
 		MaxIdle:  1,
@@ -77,12 +101,10 @@ func convertPDF(_ context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("failed to get pdfium instance: %w", err)
 	}
 
-	// Create converter with metrics enabled if requested
 	config := pdfmarkdown.DefaultConfig()
 	config.EnableMetricsLogging = enableMetrics
 	converter := pdfmarkdown.NewConverterWithConfig(instance, config)
 
-	// Get document info
 	info, err := converter.GetDocumentInfo(inputPath)
 	if err != nil {
 		return fmt.Errorf("failed to get document info: %w", err)
@@ -90,7 +112,37 @@ func convertPDF(_ context.Context, cmd *cli.Command) error {
 
 	fmt.Fprintf(os.Stderr, "Processing PDF with %d pages...\n", info.PageCount)
 
-	// Convert PDF
+	if chunkMode {
+		cc := pdfmarkdown.ChunkConfig{
+			MaxTokens:      int(chunkMaxTokens),
+			OverlapTokens:  int(chunkOverlap),
+			RepeatHeadings: chunkRepeatHeadings,
+		}
+
+		chunks, err := converter.ConvertFileChunks(inputPath, cc)
+		if err != nil {
+			return fmt.Errorf("failed to convert PDF to chunks: %w", err)
+		}
+
+		fmt.Fprintf(os.Stderr, "Produced %d chunks\n", len(chunks))
+
+		output, err := json.MarshalIndent(chunks, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal chunks: %w", err)
+		}
+
+		if outputPath != "" {
+			if err := os.WriteFile(outputPath, output, 0644); err != nil {
+				return fmt.Errorf("failed to write output file: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Chunks written to %s\n", outputPath)
+		} else {
+			fmt.Println(string(output))
+		}
+
+		return nil
+	}
+
 	var markdown string
 	if startPage >= 0 || endPage >= 0 {
 		if startPage < 0 {
@@ -110,10 +162,8 @@ func convertPDF(_ context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("failed to convert PDF: %w", err)
 	}
 
-	// Write output
 	if outputPath != "" {
-		err = os.WriteFile(outputPath, []byte(markdown), 0644)
-		if err != nil {
+		if err := os.WriteFile(outputPath, []byte(markdown), 0644); err != nil {
 			return fmt.Errorf("failed to write output file: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "Markdown written to %s\n", outputPath)

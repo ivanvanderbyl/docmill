@@ -9,9 +9,21 @@ import (
 	"github.com/pkg/errors"
 )
 
-// ExtractPage extracts all enriched text from a PDF page.
-func ExtractPage(instance pdfium.Pdfium, page references.FPDF_PAGE, pageNumber int, config Config) (*Page, error) {
-	// Get page dimensions
+// rawPageData holds the data extracted from pdfium before structure detection.
+// This separation allows pdfium I/O (single-threaded) to be decoupled from the
+// CPU-bound structure detection pipeline which can run concurrently.
+type rawPageData struct {
+	pageNumber int
+	pageWidth  float64
+	pageHeight float64
+	words      []EnrichedWord
+	lines      []Edge
+}
+
+// extractRawPageData extracts raw characters, words, and line objects from a PDF
+// page using the pdfium instance. This must run sequentially because pdfium is
+// single-threaded (WASM).
+func extractRawPageData(instance pdfium.Pdfium, page references.FPDF_PAGE, pageNumber int) (*rawPageData, error) {
 	pageSize, err := instance.FPDF_GetPageWidthF(&requests.FPDF_GetPageWidthF{
 		Page: requests.Page{
 			ByReference: &page,
@@ -30,13 +42,6 @@ func ExtractPage(instance pdfium.Pdfium, page references.FPDF_PAGE, pageNumber i
 		return nil, errors.Wrap(err, "failed to get page size")
 	}
 
-	// Get MediaBox to handle non-zero origins
-	// For now, assume origin at (0,0) - MediaBox support can be added when needed
-	// Most PDFs have MediaBox starting at origin
-	originX := 0.0
-	originY := 0.0
-
-	// Load text page
 	textPage, err := instance.FPDFText_LoadPage(&requests.FPDFText_LoadPage{
 		Page: requests.Page{
 			ByReference: &page,
@@ -49,7 +54,6 @@ func ExtractPage(instance pdfium.Pdfium, page references.FPDF_PAGE, pageNumber i
 		TextPage: textPage.TextPage,
 	})
 
-	// Count characters
 	charCount, err := instance.FPDFText_CountChars(&requests.FPDFText_CountChars{
 		TextPage: textPage.TextPage,
 	})
@@ -57,98 +61,112 @@ func ExtractPage(instance pdfium.Pdfium, page references.FPDF_PAGE, pageNumber i
 		return nil, errors.Wrap(err, "failed to count characters")
 	}
 
+	pw := float64(pageSize.PageWidth)
+	ph := float64(pageHeight.PageHeight)
+
 	if charCount.Count == 0 {
-		return &Page{
-			Number:     pageNumber,
-			Width:      float64(pageSize.PageWidth),
-			Height:     float64(pageHeight.PageHeight),
-			Paragraphs: []Paragraph{},
+		return &rawPageData{
+			pageNumber: pageNumber,
+			pageWidth:  pw,
+			pageHeight: ph,
 		}, nil
 	}
 
-	// Extract all characters with metadata
-	chars, err := extractEnrichedChars(instance, textPage.TextPage, charCount.Count, float64(pageHeight.PageHeight))
+	chars, err := extractEnrichedChars(instance, textPage.TextPage, charCount.Count, ph)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to extract characters")
 	}
 
-	// Normalize coordinates by MediaBox origin
-	for i := range chars {
-		chars[i].Box.X0 -= originX
-		chars[i].Box.X1 -= originX
-		chars[i].Box.Y0 -= originY
-		chars[i].Box.Y1 -= originY
-	}
+	generatedSpaces := detectGeneratedSpaces(instance, textPage.TextPage, charCount.Count)
 
-	// Group characters into words
-	words := groupCharsIntoWords(chars)
-
-	// Expand ligatures
+	words := groupCharsIntoWords(chars, generatedSpaces)
 	words = expandLigatures(words)
-
-	// Deduplicate CJK characters
 	words = deduplicateCJKChars(words)
 
-	// Build document structure
-	// Note: Word merging based on proximity happens in buildParagraphs after line grouping
-	paragraphs := buildParagraphs(words, float64(pageSize.PageWidth), config)
-
-	// Extract explicit line objects from the PDF
-	lines, err := extractLinesFromPage(instance, page, float64(pageSize.PageWidth), float64(pageHeight.PageHeight))
+	lines, err := extractLinesFromPage(instance, page, pw, ph)
 	if err != nil {
-		// Non-fatal: continue without lines
 		lines = []Edge{}
 	}
 
-	// Detect columns
-	columns := detectColumns(words, float64(pageSize.PageWidth))
+	return &rawPageData{
+		pageNumber: pageNumber,
+		pageWidth:  pw,
+		pageHeight: ph,
+		words:      words,
+		lines:      lines,
+	}, nil
+}
 
-	// Create page with paragraphs
+// buildPageStructure runs the CPU-bound structure detection pipeline on
+// pre-extracted raw page data. This is safe to call concurrently.
+func buildPageStructure(raw *rawPageData, config Config) *Page {
+	if len(raw.words) == 0 {
+		return &Page{
+			Number:     raw.pageNumber,
+			Width:      raw.pageWidth,
+			Height:     raw.pageHeight,
+			Paragraphs: []Paragraph{},
+		}
+	}
+
+	quality := assessPageQuality(raw.words)
+
+	var paragraphs []Paragraph
+	if quality.IsLowQuality {
+		paragraphs = buildParagraphsNoDetection(raw.words, raw.pageWidth, config)
+	} else {
+		paragraphs = buildParagraphs(raw.words, raw.pageWidth, config)
+	}
+
+	columns := detectColumns(raw.words, raw.pageWidth)
+
 	resultPage := &Page{
-		Number:     pageNumber,
-		Width:      float64(pageSize.PageWidth),
-		Height:     float64(pageHeight.PageHeight),
+		Number:     raw.pageNumber,
+		Width:      raw.pageWidth,
+		Height:     raw.pageHeight,
+		Quality:    quality,
 		Paragraphs: paragraphs,
-		Lines:      lines,
+		Lines:      raw.lines,
 		Columns:    columns,
 	}
 
-	// Detect tables if enabled
 	if config.DetectTables {
 		var tables []Table
 
-		// Use segment-based detection (better for tables without ruling lines)
 		if config.UseSegmentBasedTables {
-			// Calculate adaptive thresholds if enabled
 			var thresholds AdaptiveThresholds
 			if config.UseAdaptiveThresholds {
-				thresholds = calculateAdaptiveThresholds(words)
+				thresholds = calculateAdaptiveThresholds(raw.words)
 			} else {
-				// Use default thresholds
 				thresholds = AdaptiveThresholds{
 					HorizontalThreshold: 20.0,
 					VerticalThreshold:   5.0,
 				}
 			}
 
-			// Detect tables using segment-based approach
 			segmentTables := DetectTablesSegmentBased(resultPage, thresholds)
 			tables = append(tables, segmentTables...)
 		}
 
-		// Also use line-based detection (good for tables with ruling lines)
-		if len(lines) > 0 {
+		if len(raw.lines) > 0 {
 			lineTables := DetectTables(resultPage, config.TableSettings)
 			tables = append(tables, lineTables...)
 		}
 
-		// Deduplicate tables (if both methods found the same table)
 		tables = deduplicateTables(tables)
-
 		resultPage.Tables = tables
 	}
 
-	return resultPage, nil
+	return resultPage
+}
+
+// ExtractPage extracts all enriched text from a PDF page.
+func ExtractPage(instance pdfium.Pdfium, page references.FPDF_PAGE, pageNumber int, config Config) (*Page, error) {
+	raw, err := extractRawPageData(instance, page, pageNumber)
+	if err != nil {
+		return nil, err
+	}
+	return buildPageStructure(raw, config), nil
 }
 
 // deduplicateTables removes duplicate tables based on bounding box overlap
@@ -323,7 +341,45 @@ func extractEnrichedChars(instance pdfium.Pdfium, textPage references.FPDF_TEXTP
 	return chars, nil
 }
 
-// groupCharsIntoWords groups characters into words based on spacing.
+func detectGeneratedSpaces(instance pdfium.Pdfium, textPage references.FPDF_TEXTPAGE, count int) map[int]bool {
+	generated := make(map[int]bool)
+
+	textResp, err := instance.FPDFText_GetText(&requests.FPDFText_GetText{
+		TextPage:   textPage,
+		StartIndex: 0,
+		Count:      count,
+	})
+	if err != nil || textResp.Text == "" {
+		return generated
+	}
+
+	fullText := []rune(textResp.Text)
+	rawIdx := 0
+
+	for _, r := range fullText {
+		if rawIdx >= count {
+			break
+		}
+		unicodeRes, err := instance.FPDFText_GetUnicode(&requests.FPDFText_GetUnicode{
+			TextPage: textPage,
+			Index:    rawIdx,
+		})
+		if err != nil {
+			rawIdx++
+			continue
+		}
+		rawChar := rune(unicodeRes.Unicode)
+
+		if r == ' ' && rawChar != ' ' && rawChar != '\t' {
+			generated[rawIdx] = true
+			continue
+		}
+		rawIdx++
+	}
+
+	return generated
+}
+
 // isLowerCase returns true if the rune is a lowercase letter
 func isLowerCase(r rune) bool {
 	return r >= 'a' && r <= 'z'
@@ -366,10 +422,7 @@ func calculateAverageCharWidth(chars []EnrichedChar) float64 {
 	return totalWidth / float64(len(chars))
 }
 
-// detectWordBoundaries detects word boundaries for normal horizontal text
-// Uses ONLY explicit whitespace to avoid false positives
-// Visual gap analysis is reserved for rotation-aware detection
-func detectWordBoundaries(chars []EnrichedChar) []int {
+func detectWordBoundaries(chars []EnrichedChar, generatedSpaces map[int]bool) []int {
 	if len(chars) <= 1 {
 		return nil
 	}
@@ -379,30 +432,15 @@ func detectWordBoundaries(chars []EnrichedChar) []int {
 	for i := 1; i < len(chars); i++ {
 		curr := chars[i]
 
-		// Only explicit whitespace creates word boundaries
 		if curr.Text == ' ' || curr.Text == '\t' || curr.Text == '\n' || curr.Text == '\r' {
 			boundaries = append(boundaries, i)
 			continue
 		}
 
-		// NOTE: Visual gap-based detection has been DISABLED for normal text.
-		//
-		// Why: PDFs have highly variable character spacing:
-		// - Proportional fonts: 'i' and 'W' have different widths
-		// - Kerning: 'AV' may be closer than 'AA'
-		// - Tracking: Some text is letter-spaced for visual effect
-		// - Hyphens/periods: "SOA-SF0005-2025" has small gaps that aren't word boundaries
-		// - Email addresses: "user.name@example.com" has dots that aren't boundaries
-		//
-		// Any gap-based threshold creates false positives:
-		// - Too low: Splits normal words "STATEMENT" → "STAT E M E N T"
-		// - Too high: Misses genuine concatenations
-		//
-		// Solution: Use explicit whitespace for normal text, reserve gap analysis
-		// for rotation-aware detection where whitespace is truly absent.
-		//
-		// Visual verification: Check PDF rendering to see if spaces are present.
-		// If the PDF visually shows proper spacing, whitespace chars exist.
+		if generatedSpaces[i] {
+			boundaries = append(boundaries, i)
+			continue
+		}
 	}
 
 	return boundaries
@@ -443,8 +481,7 @@ func shouldReverseCharOrder(angle float32) bool {
 	return degrees > 225 && degrees < 315
 }
 
-// detectWordBoundariesRotationAware detects boundaries considering rotation
-func detectWordBoundariesRotationAware(chars []EnrichedChar) []int {
+func detectWordBoundariesRotationAware(chars []EnrichedChar, generatedSpaces map[int]bool) []int {
 	if len(chars) <= 1 {
 		return nil
 	}
@@ -497,20 +534,18 @@ func detectWordBoundariesRotationAware(chars []EnrichedChar) []int {
 			}
 		}
 	} else {
-		// For normal text, use X-axis gaps (existing logic)
-		boundaries = detectWordBoundaries(chars)
+		boundaries = detectWordBoundaries(chars, generatedSpaces)
 	}
 
 	return boundaries
 }
 
-func groupCharsIntoWords(chars []EnrichedChar) []EnrichedWord {
+func groupCharsIntoWords(chars []EnrichedChar, generatedSpaces map[int]bool) []EnrichedWord {
 	if len(chars) == 0 {
 		return nil
 	}
 
-	// Detect word boundaries BEFORE reversing (on original coordinates)
-	boundaries := detectWordBoundariesRotationAware(chars)
+	boundaries := detectWordBoundariesRotationAware(chars, generatedSpaces)
 
 	// Check if we need to reverse character order (for 270° rotated text)
 	shouldReverse := len(chars) > 0 && shouldReverseCharOrder(chars[0].Angle)

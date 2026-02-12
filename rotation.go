@@ -211,8 +211,13 @@ func groupWordsIntoHorizontalLines(words []EnrichedWord) []Line {
 			}
 			baselineClose := baselineDiff < threshold
 
-			if visuallySameLine || baselineClose {
-				// Same line
+			avgFontSize := (getLineAvgFontSize(currentLine) + word.FontSize) / 2
+			relax := 0.1 * avgFontSize
+			expandedLine := Rect{lineBox.X0, lineBox.Y0 - relax, lineBox.X1, lineBox.Y1 + relax}
+			expandedWord := Rect{word.Box.X0, word.Box.Y0 - relax, word.Box.X1, word.Box.Y1 + relax}
+			relaxedOverlap := expandedWord.Y0 < expandedLine.Y1 && expandedWord.Y1 > expandedLine.Y0
+
+			if visuallySameLine || baselineClose || relaxedOverlap {
 				currentLine = append(currentLine, word)
 				lineBox.X0 = math.Min(lineBox.X0, word.Box.X0)
 				lineBox.Y0 = math.Min(lineBox.Y0, word.Box.Y0)

@@ -242,14 +242,8 @@ func convertParagraphToMarkdown(md *markdown.Markdown, para Paragraph) {
 			currentSection.WriteString("  \n")
 		}
 
-		// Build the line content
-		for j, word := range line.Words {
-			if j > 0 {
-				currentSection.WriteString(" ")
-			}
-			formattedWord := applyInlineFormatting(word)
-			currentSection.WriteString(formattedWord)
-		}
+		// Build the line content using formatting runs to avoid per-word markers
+		currentSection.WriteString(buildFormattedLine(line.Words))
 	}
 
 	// Add final section
@@ -277,26 +271,83 @@ func convertParagraphToMarkdown(md *markdown.Markdown, para Paragraph) {
 	}
 }
 
+// wordStyle returns a comparable key representing the inline formatting of a word.
+type inlineStyle struct {
+	bold, italic, mono bool
+}
+
+func wordStyle(w EnrichedWord) inlineStyle {
+	return inlineStyle{bold: w.IsBold, italic: w.IsItalic, mono: w.IsMonospace}
+}
+
+// buildFormattedLine groups consecutive words with the same formatting style
+// into runs so that e.g. bold spans produce a single **bold run** instead of
+// **word1** **word2** **word3**.
+func buildFormattedLine(words []EnrichedWord) string {
+	if len(words) == 0 {
+		return ""
+	}
+
+	var out strings.Builder
+
+	runStart := 0
+	runStyle := wordStyle(words[0])
+
+	flushRun := func(end int) {
+		var runText strings.Builder
+		for i := runStart; i < end; i++ {
+			if i > runStart {
+				runText.WriteString(" ")
+			}
+			runText.WriteString(words[i].Text)
+		}
+
+		text := runText.String()
+		if runStyle.bold && runStyle.italic {
+			text = markdown.BoldItalic(text)
+		} else if runStyle.bold {
+			text = markdown.Bold(text)
+		} else if runStyle.italic {
+			text = markdown.Italic(text)
+		} else if runStyle.mono {
+			text = markdown.Code(text)
+		}
+
+		if out.Len() > 0 {
+			out.WriteString(" ")
+		}
+		out.WriteString(text)
+	}
+
+	for i := 1; i < len(words); i++ {
+		s := wordStyle(words[i])
+		if s != runStyle {
+			flushRun(i)
+			runStart = i
+			runStyle = s
+		}
+	}
+	flushRun(len(words))
+
+	return out.String()
+}
+
 // applyInlineFormatting applies markdown formatting to a word based on its style.
 func applyInlineFormatting(word EnrichedWord) string {
 	text := word.Text
 
-	// Apply bold and italic
 	if word.IsBold && word.IsItalic {
 		return markdown.BoldItalic(text)
 	}
 
-	// Apply bold
 	if word.IsBold {
 		return markdown.Bold(text)
 	}
 
-	// Apply italic
 	if word.IsItalic {
 		return markdown.Italic(text)
 	}
 
-	// Apply code (monospace)
 	if word.IsMonospace {
 		return markdown.Code(text)
 	}

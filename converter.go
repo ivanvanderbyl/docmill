@@ -3,12 +3,14 @@ package pdfmarkdown
 import (
 	"io"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/klippa-app/go-pdfium"
 	"github.com/klippa-app/go-pdfium/references"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/pkg/errors"
+	"github.com/sourcegraph/conc/stream"
 )
 
 // ProcessingMetrics contains timing and statistics for PDF conversion
@@ -60,17 +62,23 @@ type Config struct {
 
 	// EnableMetricsLogging enables processing time and statistics logging (default: false)
 	EnableMetricsLogging bool
+
+	// MaxConcurrency controls how many pages are processed concurrently during
+	// the structure detection phase. PDFium extraction is always sequential,
+	// but paragraph/table/heading detection runs in parallel. (default: 10)
+	MaxConcurrency int
 }
 
 // DefaultConfig returns the default converter configuration.
 func DefaultConfig() Config {
 	return Config{
-		IncludePageBreaks:      true,
-		MinHeadingFontSize:     1.15,
-		DetectTables:           true,
-		TableSettings:          DefaultTableSettings(),
-		UseSegmentBasedTables:  false, // Opt-in: good for PDFs without ruling lines
-		UseAdaptiveThresholds:  true,
+		IncludePageBreaks:     true,
+		MinHeadingFontSize:    1.15,
+		DetectTables:          true,
+		TableSettings:         DefaultTableSettings(),
+		UseSegmentBasedTables: false,
+		UseAdaptiveThresholds: true,
+		MaxConcurrency:        10,
 	}
 }
 
@@ -176,15 +184,36 @@ func (c *Converter) ConvertPageRange(filePath string, startPage, endPage int) (s
 		return "", errors.New("invalid page range: start page must be <= end page")
 	}
 
-	// Extract pages
-	document := &Document{}
+	numPages := endPage - startPage + 1
+	rawPages := make([]*rawPageData, numPages)
 	for i := startPage; i <= endPage; i++ {
-		page, err := c.extractPage(doc.Document, i)
+		raw, err := c.extractRawPage(doc.Document, i)
 		if err != nil {
 			return "", errors.Wrapf(err, "failed to extract page %d", i+1)
 		}
-		document.Pages = append(document.Pages, *page)
+		rawPages[i-startPage] = raw
 	}
+
+	maxConc := c.config.MaxConcurrency
+	if maxConc < 1 {
+		maxConc = 10
+	}
+
+	document := &Document{
+		Pages: make([]Page, numPages),
+	}
+	s := stream.New().WithMaxGoroutines(maxConc)
+	for i := 0; i < numPages; i++ {
+		idx := i
+		raw := rawPages[idx]
+		s.Go(func() stream.Callback {
+			page := buildPageStructure(raw, c.config)
+			return func() {
+				document.Pages[idx] = *page
+			}
+		})
+	}
+	s.Wait()
 
 	return document.ToMarkdown(c.config), nil
 }
@@ -193,7 +222,6 @@ func (c *Converter) ConvertPageRange(filePath string, startPage, endPage int) (s
 func (c *Converter) convertDocument(docRef references.FPDF_DOCUMENT) (string, error) {
 	startTime := time.Now()
 
-	// Get page count
 	pageCount, err := c.instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{
 		Document: docRef,
 	})
@@ -201,38 +229,55 @@ func (c *Converter) convertDocument(docRef references.FPDF_DOCUMENT) (string, er
 		return "", errors.Wrap(err, "failed to get page count")
 	}
 
-	// Extract all pages with timing
 	document := &Document{
-		Pages: make([]Page, 0, pageCount.PageCount),
+		Pages: make([]Page, pageCount.PageCount),
+	}
+	pageMetrics := make([]PageMetrics, pageCount.PageCount)
+
+	maxConc := c.config.MaxConcurrency
+	if maxConc < 1 {
+		maxConc = 10
 	}
 
-	var pageMetrics []PageMetrics
+	rawPages := make([]*rawPageData, pageCount.PageCount)
 	for i := 0; i < pageCount.PageCount; i++ {
-		pageStart := time.Now()
-		page, err := c.extractPage(docRef, i)
-		pageDuration := time.Since(pageStart)
-
+		raw, err := c.extractRawPage(docRef, i)
 		if err != nil {
 			return "", errors.Wrapf(err, "failed to extract page %d", i+1)
 		}
-		document.Pages = append(document.Pages, *page)
-
-		pageMetrics = append(pageMetrics, PageMetrics{
-			PageNumber: i + 1,
-			Duration:   pageDuration,
-		})
-
-		if c.config.EnableMetricsLogging {
-			log.Printf("Page %d/%d extracted in %v", i+1, pageCount.PageCount, pageDuration)
-		}
+		rawPages[i] = raw
 	}
 
-	// Calculate document statistics
-	stats := calculateDocumentStatistics(document)
+	var mu sync.Mutex
+	s := stream.New().WithMaxGoroutines(maxConc)
+	for i := 0; i < pageCount.PageCount; i++ {
+		idx := i
+		raw := rawPages[idx]
+		s.Go(func() stream.Callback {
+			pageStart := time.Now()
+			page := buildPageStructure(raw, c.config)
+			dur := time.Since(pageStart)
 
+			return func() {
+				document.Pages[idx] = *page
+				mu.Lock()
+				pageMetrics[idx] = PageMetrics{
+					PageNumber: idx + 1,
+					Duration:   dur,
+				}
+				mu.Unlock()
+
+				if c.config.EnableMetricsLogging {
+					log.Printf("Page %d/%d processed in %v", idx+1, pageCount.PageCount, dur)
+				}
+			}
+		})
+	}
+	s.Wait()
+
+	stats := calculateDocumentStatistics(document)
 	totalTime := time.Since(startTime)
 
-	// Log metrics if enabled
 	if c.config.EnableMetricsLogging {
 		logProcessingMetrics(ProcessingMetrics{
 			TotalTime:       totalTime,
@@ -244,9 +289,9 @@ func (c *Converter) convertDocument(docRef references.FPDF_DOCUMENT) (string, er
 	return document.ToMarkdown(c.config), nil
 }
 
-// extractPage extracts a single page with all its structure.
-func (c *Converter) extractPage(docRef references.FPDF_DOCUMENT, pageIndex int) (*Page, error) {
-	// Load the page
+// extractRawPage loads a PDF page and extracts raw data (chars, words, lines)
+// using pdfium. This must be called sequentially.
+func (c *Converter) extractRawPage(docRef references.FPDF_DOCUMENT, pageIndex int) (*rawPageData, error) {
 	pageResp, err := c.instance.FPDF_LoadPage(&requests.FPDF_LoadPage{
 		Document: docRef,
 		Index:    pageIndex,
@@ -258,13 +303,16 @@ func (c *Converter) extractPage(docRef references.FPDF_DOCUMENT, pageIndex int) 
 		Page: pageResp.Page,
 	})
 
-	// Extract page content
-	page, err := ExtractPage(c.instance, pageResp.Page, pageIndex+1, c.config)
+	return extractRawPageData(c.instance, pageResp.Page, pageIndex+1)
+}
+
+// extractPage extracts a single page with all its structure.
+func (c *Converter) extractPage(docRef references.FPDF_DOCUMENT, pageIndex int) (*Page, error) {
+	raw, err := c.extractRawPage(docRef, pageIndex)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to extract page content")
 	}
-
-	return page, nil
+	return buildPageStructure(raw, c.config), nil
 }
 
 // calculateDocumentStatistics calculates statistics for the document
@@ -354,33 +402,50 @@ func (c *Converter) ConvertFileWithMetrics(filePath string) (string, ProcessingM
 		return "", ProcessingMetrics{}, errors.Wrap(err, "failed to get page count")
 	}
 
-	// Extract all pages with timing
 	document := &Document{
-		Pages: make([]Page, 0, pageCount.PageCount),
+		Pages: make([]Page, pageCount.PageCount),
+	}
+	pageMetrics := make([]PageMetrics, pageCount.PageCount)
+
+	maxConc := c.config.MaxConcurrency
+	if maxConc < 1 {
+		maxConc = 10
 	}
 
-	var pageMetrics []PageMetrics
+	rawPages := make([]*rawPageData, pageCount.PageCount)
 	for i := 0; i < pageCount.PageCount; i++ {
-		pageStart := time.Now()
-		page, err := c.extractPage(doc.Document, i)
-		pageDuration := time.Since(pageStart)
-
+		raw, err := c.extractRawPage(doc.Document, i)
 		if err != nil {
 			return "", ProcessingMetrics{}, errors.Wrapf(err, "failed to extract page %d", i+1)
 		}
-		document.Pages = append(document.Pages, *page)
-
-		pageMetrics = append(pageMetrics, PageMetrics{
-			PageNumber: i + 1,
-			Duration:   pageDuration,
-		})
+		rawPages[i] = raw
 	}
 
-	// Calculate statistics
-	stats := calculateDocumentStatistics(document)
+	var mu sync.Mutex
+	s := stream.New().WithMaxGoroutines(maxConc)
+	for i := 0; i < pageCount.PageCount; i++ {
+		idx := i
+		raw := rawPages[idx]
+		s.Go(func() stream.Callback {
+			pageStart := time.Now()
+			page := buildPageStructure(raw, c.config)
+			dur := time.Since(pageStart)
 
-	// Generate markdown
-	markdown := document.ToMarkdown(c.config)
+			return func() {
+				document.Pages[idx] = *page
+				mu.Lock()
+				pageMetrics[idx] = PageMetrics{
+					PageNumber: idx + 1,
+					Duration:   dur,
+				}
+				mu.Unlock()
+			}
+		})
+	}
+	s.Wait()
+
+	stats := calculateDocumentStatistics(document)
+	markdownOutput := document.ToMarkdown(c.config)
 
 	totalTime := time.Since(startTime)
 
@@ -391,7 +456,7 @@ func (c *Converter) ConvertFileWithMetrics(filePath string) (string, ProcessingM
 		Statistics:      stats,
 	}
 
-	return markdown, metrics, nil
+	return markdownOutput, metrics, nil
 }
 
 // GetDocumentInfo returns basic information about a PDF without converting it.
