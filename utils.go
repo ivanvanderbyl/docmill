@@ -3,6 +3,7 @@ package pdfmarkdown
 import (
 	"math"
 	"sort"
+	"unicode"
 )
 
 // calculateMedian calculates the median value of a float64 slice
@@ -306,6 +307,35 @@ func checkVerticalOverlap(r1, r2 Rect) (bool, int) {
 	}
 
 	return false, 0
+}
+
+// isLower reports whether r is a lowercase letter.
+func isLower(r rune) bool { return unicode.IsLower(r) }
+
+// isUpper reports whether r is an uppercase letter.
+func isUpper(r rune) bool { return unicode.IsUpper(r) }
+
+func weightedEdgeDistance(r1, r2 Rect) float64 {
+	hDist := horizontalDistance(r1, r2)
+	if hDist == math.MaxFloat64 {
+		return math.MaxFloat64
+	}
+	yDist := centerDistanceY(r1, r2)
+	return hDist + 0.2*yDist
+}
+
+func weightedDistance(r1, r2 Rect, xWeight, yWeight float64) float64 {
+	dx := centerDistanceX(r1, r2)
+	dy := centerDistanceY(r1, r2)
+	return math.Sqrt(xWeight*dx*dx + yWeight*dy*dy)
+}
+
+func centerDistanceX(r1, r2 Rect) float64 {
+	return math.Abs(r1.CenterX() - r2.CenterX())
+}
+
+func centerDistanceY(r1, r2 Rect) float64 {
+	return math.Abs(r1.CenterY() - r2.CenterY())
 }
 
 // verticalDistance calculates the vertical distance between two rectangles

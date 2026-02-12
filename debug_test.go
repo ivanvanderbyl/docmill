@@ -2,6 +2,7 @@ package pdfmarkdown_test
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -25,8 +26,10 @@ func TestDebug_SamplePDF_LineSpacing(t *testing.T) {
 	instance, err := pool.GetInstance(time.Second * 30)
 	require.NoError(t, err)
 
-	// Load page 1
-	samplePath := filepath.Join("..", "riskv2", "testdata", "sample.pdf")
+	samplePath := filepath.Join("testdata", "simple.pdf")
+	if _, statErr := os.Stat(samplePath); os.IsNotExist(statErr) {
+		t.Skip("simple.pdf not found")
+	}
 	doc, err := instance.OpenDocument(&requests.OpenDocument{
 		FilePath: &samplePath,
 	})

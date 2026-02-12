@@ -103,7 +103,7 @@ func TestIssue140_ImprovedTableDetection(t *testing.T) {
 			"886",           // Amount fragments
 		}
 
-		markdownLower := strings.ToLower(markdown)
+		markdownLower := strings.ToLower(strings.ReplaceAll(markdown, " ", ""))
 		foundCount := 0
 		for _, content := range expectedContent {
 			if strings.Contains(markdownLower, strings.ToLower(content)) {

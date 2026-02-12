@@ -15,6 +15,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jolestar/go-commons-pool/v2 v2.1.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/sourcegraph/conc v0.3.0 // indirect
 	github.com/tetratelabs/wazero v1.9.0 // indirect
 	github.com/yuin/goldmark v1.7.13 // indirect
 	golang.org/x/net v0.44.0 // indirect

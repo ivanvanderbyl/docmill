@@ -158,6 +158,7 @@ type Page struct {
 	Number     int
 	Width      float64
 	Height     float64
+	Quality    PageQuality
 	Paragraphs []Paragraph
 	Tables     []Table
 	Lines      []Edge   // Explicit line objects extracted from PDF

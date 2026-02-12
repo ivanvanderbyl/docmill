@@ -26,9 +26,9 @@ func TestConverter_SamplePDF(t *testing.T) {
 	converter := pdfmarkdown.NewConverter(instance)
 
 	// Test with the sample PDF
-	samplePath := filepath.Join("..", "riskv2", "testdata", "sample.pdf")
+	samplePath := filepath.Join("testdata", "simple.pdf")
 	if _, err := os.Stat(samplePath); os.IsNotExist(err) {
-		t.Skip("Sample PDF not found, skipping test")
+		t.Skip("simple.pdf not found, skipping test")
 		return
 	}
 
@@ -36,13 +36,7 @@ func TestConverter_SamplePDF(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, markdown)
 
-	// Write output for inspection
-	outputPath := filepath.Join("testdata", "sample_output.md")
-	os.MkdirAll(filepath.Dir(outputPath), 0755)
-	err = os.WriteFile(outputPath, []byte(markdown), 0644)
-	require.NoError(t, err)
-
-	t.Logf("Markdown written to: %s\n", outputPath)
+	t.Logf("Markdown length: %d chars\n", len(markdown))
 	t.Logf("Markdown preview (first 500 chars):\n%s\n", markdown[:min(500, len(markdown))])
 }
 

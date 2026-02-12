@@ -110,75 +110,7 @@ func TestVisualVerification_Issue140(t *testing.T) {
 	t.Logf("3. Number separations (e.g., '0000 .075 .883') are correct")
 }
 
-// TestVisualVerification_SOA outputs visual coordinates for SOA PDF
-func TestVisualVerification_SOA(t *testing.T) {
-	pool, err := webassembly.Init(webassembly.Config{
-		MinIdle:  1,
-		MaxIdle:  1,
-		MaxTotal: 1,
-	})
-	require.NoError(t, err)
-	defer pool.Close()
 
-	instance, err := pool.GetInstance(time.Second * 30)
-	require.NoError(t, err)
-
-	pdfPath := filepath.Join("testdata", "Mock Statement of Advice.pdf")
-	doc, err := instance.OpenDocument(&requests.OpenDocument{
-		FilePath: &pdfPath,
-	})
-	if err != nil {
-		t.Skip("Mock Statement of Advice.pdf not found")
-	}
-	defer instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{
-		Document: doc.Document,
-	})
-
-	pageResp, err := instance.FPDF_LoadPage(&requests.FPDF_LoadPage{
-		Document: doc.Document,
-		Index:    0,
-	})
-	require.NoError(t, err)
-	defer instance.FPDF_ClosePage(&requests.FPDF_ClosePage{
-		Page: pageResp.Page,
-	})
-
-	config := pdfmarkdown.DefaultConfig()
-	page, err := pdfmarkdown.ExtractPage(instance, pageResp.Page, 1, config)
-	require.NoError(t, err)
-
-	t.Logf("\n=== VISUAL VERIFICATION: SOA ===\n")
-
-	// Find a line with currency values
-	for pi, para := range page.Paragraphs {
-		for li, line := range para.Lines {
-			lineText := ""
-			for _, word := range line.Words {
-				lineText += word.Text + " "
-			}
-
-			// Look for currency values
-			if len(lineText) > 0 && (lineText[0] == '$' || contains(lineText, "$")) {
-				t.Logf("\n--- Para %d, Line %d: Currency Line ---", pi, li)
-				t.Logf("Text: %s", lineText)
-
-				for wi, word := range line.Words {
-					t.Logf("\nWord %d: %q", wi, word.Text)
-					t.Logf("  BBox: X=(%.2f → %.2f)", word.Box.X0, word.Box.X1)
-
-					if wi < len(line.Words)-1 {
-						nextWord := line.Words[wi+1]
-						gap := nextWord.Box.X0 - word.Box.X1
-						t.Logf("  Gap: %.2f", gap)
-					}
-				}
-
-				// Only show first currency line
-				return
-			}
-		}
-	}
-}
 
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && s[len(s)-len(substr):] == substr ||

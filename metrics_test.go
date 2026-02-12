@@ -25,10 +25,10 @@ func TestProcessingMetrics(t *testing.T) {
 
 	converter := pdfmarkdown.NewConverter(instance)
 
-	pdfPath := filepath.Join("testdata", "Mock Statement of Advice.pdf")
+	pdfPath := filepath.Join("testdata", "simple.pdf")
 	markdown, metrics, err := converter.ConvertFileWithMetrics(pdfPath)
 	if err != nil {
-		t.Skip("Mock Statement of Advice.pdf not found")
+		t.Skip("simple.pdf not found")
 	}
 
 	require.NotEmpty(t, markdown)
@@ -85,10 +85,10 @@ func TestMetricsLogging(t *testing.T) {
 
 	converter := pdfmarkdown.NewConverterWithConfig(instance, config)
 
-	pdfPath := filepath.Join("testdata", "Mock Statement of Advice.pdf")
+	pdfPath := filepath.Join("testdata", "simple.pdf")
 	markdown, err := converter.ConvertFile(pdfPath)
 	if err != nil {
-		t.Skip("Mock Statement of Advice.pdf not found")
+		t.Skip("simple.pdf not found")
 	}
 
 	require.NotEmpty(t, markdown)

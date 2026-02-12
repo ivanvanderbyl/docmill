@@ -89,6 +89,62 @@ func buildParagraphs(words []EnrichedWord, pageWidth float64, config Config) []P
 	return paragraphs
 }
 
+func buildParagraphsNoDetection(words []EnrichedWord, pageWidth float64, config Config) []Paragraph {
+	if len(words) == 0 {
+		return nil
+	}
+
+	textBlocks := detectTextRotation(words)
+
+	if len(textBlocks) == 0 {
+		sortedWords := make([]EnrichedWord, len(words))
+		copy(sortedWords, words)
+		sort.Slice(sortedWords, func(i, j int) bool {
+			wordI := sortedWords[i]
+			wordJ := sortedWords[j]
+
+			overlapY0 := math.Max(wordI.Box.Y0, wordJ.Box.Y0)
+			overlapY1 := math.Min(wordI.Box.Y1, wordJ.Box.Y1)
+			overlapHeight := overlapY1 - overlapY0
+			minHeight := math.Min(wordI.Box.Height(), wordJ.Box.Height())
+
+			if overlapHeight > minHeight*0.3 {
+				return wordI.Box.X0 < wordJ.Box.X0
+			}
+			return wordI.Box.Y0 < wordJ.Box.Y0
+		})
+
+		lines := groupWordsIntoLinesBaseline(sortedWords)
+
+		textBlocks = []TextBlock{
+			{
+				Words:            sortedWords,
+				Lines:            lines,
+				Rotation:         0,
+				ReadingDirection: "ltr",
+			},
+		}
+	}
+
+	for bi := range textBlocks {
+		for li := range textBlocks[bi].Lines {
+			textBlocks[bi].Lines[li].Words = mergeCloseWords(textBlocks[bi].Lines[li].Words)
+		}
+	}
+
+	var allLines []Line
+	for _, block := range textBlocks {
+		allLines = append(allLines, block.Lines...)
+	}
+
+	paragraphs := groupLinesIntoParagraphsAdaptive(allLines, pageWidth)
+
+	columns := detectColumns(words, pageWidth)
+	paragraphs = determineReadingOrder(paragraphs, columns)
+
+	return paragraphs
+}
+
 // groupWordsIntoLines groups words that are on the same horizontal line.
 func groupWordsIntoLines(words []EnrichedWord) []Line {
 	if len(words) == 0 {
@@ -189,8 +245,13 @@ func groupWordsIntoLinesBaseline(words []EnrichedWord) []Line {
 			}
 			baselineClose := baselineDiff < threshold
 
-			// Keep on same line if EITHER visually same line OR baseline close
-			if visuallySameLine || baselineClose {
+			avgFontSize := (getWordsAvgFontSize(currentLine) + word.FontSize) / 2
+			relax := 0.1 * avgFontSize
+			expandedLine := Rect{lineBox.X0, lineBox.Y0 - relax, lineBox.X1, lineBox.Y1 + relax}
+			expandedWord := Rect{word.Box.X0, word.Box.Y0 - relax, word.Box.X1, word.Box.Y1 + relax}
+			relaxedOverlap := expandedWord.Y0 < expandedLine.Y1 && expandedWord.Y1 > expandedLine.Y0
+
+			if visuallySameLine || baselineClose || relaxedOverlap {
 				// Add to current line
 				currentLine = append(currentLine, word)
 				lineBox.X0 = math.Min(lineBox.X0, word.Box.X0)
@@ -436,13 +497,98 @@ func detectAlignment(lines []Line, pageWidth float64) Alignment {
 	return AlignmentLeft
 }
 
-// detectHeadings identifies paragraphs that are headings and assigns levels.
+func getWordsAvgFontSize(words []EnrichedWord) float64 {
+	if len(words) == 0 {
+		return 12
+	}
+	var total float64
+	for _, w := range words {
+		total += w.FontSize
+	}
+	return total / float64(len(words))
+}
+
+func kMeansClusters1D(values []float64, k int, maxIter int, convergence float64) []float64 {
+	if len(values) == 0 {
+		return nil
+	}
+
+	sorted := make([]float64, len(values))
+	copy(sorted, values)
+	sort.Float64s(sorted)
+
+	unique := []float64{sorted[0]}
+	for i := 1; i < len(sorted); i++ {
+		if sorted[i] != sorted[len(unique)-1] {
+			unique = append(unique, sorted[i])
+		}
+	}
+
+	if k > len(unique) {
+		k = len(unique)
+	}
+	if k == 0 {
+		return nil
+	}
+
+	centroids := make([]float64, k)
+	for i := 0; i < k; i++ {
+		idx := i * (len(unique) - 1) / max(k-1, 1)
+		centroids[i] = unique[idx]
+	}
+
+	assignments := make([]int, len(values))
+
+	for iter := 0; iter < maxIter; iter++ {
+		for vi, v := range values {
+			bestCluster := 0
+			bestDist := math.Abs(v - centroids[0])
+			for ci := 1; ci < k; ci++ {
+				d := math.Abs(v - centroids[ci])
+				if d < bestDist {
+					bestDist = d
+					bestCluster = ci
+				}
+			}
+			assignments[vi] = bestCluster
+		}
+
+		newCentroids := make([]float64, k)
+		counts := make([]int, k)
+		for vi, v := range values {
+			c := assignments[vi]
+			newCentroids[c] += v
+			counts[c]++
+		}
+
+		maxShift := 0.0
+		for ci := 0; ci < k; ci++ {
+			if counts[ci] > 0 {
+				newCentroids[ci] /= float64(counts[ci])
+			} else {
+				newCentroids[ci] = centroids[ci]
+			}
+			shift := math.Abs(newCentroids[ci] - centroids[ci])
+			if shift > maxShift {
+				maxShift = shift
+			}
+		}
+		centroids = newCentroids
+
+		if maxShift < convergence {
+			break
+		}
+	}
+
+	sort.Float64s(centroids)
+	return centroids
+}
+
 func detectHeadings(paragraphs []Paragraph, config Config) {
 	if len(paragraphs) == 0 || config.MinHeadingFontSize == 0 {
 		return
 	}
 
-	// Collect all font sizes and calculate statistics
 	var allFontSizes []float64
 	for _, para := range paragraphs {
 		for _, line := range para.Lines {
@@ -451,85 +597,86 @@ func detectHeadings(paragraphs []Paragraph, config Config) {
 			}
 		}
 	}
-
 	if len(allFontSizes) == 0 {
 		return
 	}
 
-	// Calculate body text font size (using median for robustness)
 	sort.Float64s(allFontSizes)
-	medianIdx := len(allFontSizes) / 2
-	bodyFontSize := allFontSizes[medianIdx]
+	bodyFontSize := allFontSizes[len(allFontSizes)/2]
 
-	// Collect distinct font sizes that are meaningfully larger than body text
-	// Consider both single-line paragraphs AND first lines of multi-line paragraphs
-	fontSizeCount := make(map[float64]int)
+	var samples []float64
 	for _, para := range paragraphs {
 		if len(para.Lines) == 0 || len(para.Lines[0].Words) == 0 {
 			continue
 		}
-
-		line := para.Lines[0]
-
-		// Get the maximum font size in the first line
-		var maxFontSize float64
-		for _, word := range line.Words {
-			if word.FontSize > maxFontSize {
-				maxFontSize = word.FontSize
+		var maxFS float64
+		for _, word := range para.Lines[0].Words {
+			if word.FontSize > maxFS {
+				maxFS = word.FontSize
 			}
 		}
+		samples = append(samples, maxFS)
+	}
+	if len(samples) == 0 {
+		return
+	}
 
-		// For multi-line paragraphs, check if first line is a potential subsection heading
-		// (larger than the rest of the paragraph content)
-		if len(para.Lines) > 1 {
-			// Get average font size of remaining lines
-			var totalSize float64
-			var wordCount int
-			for li := 1; li < len(para.Lines); li++ {
-				for _, word := range para.Lines[li].Words {
-					totalSize += word.FontSize
-					wordCount++
-				}
-			}
+	centroids := kMeansClusters1D(samples, 6, 100, 0.01)
 
-			// Only count first line if it's significantly larger than rest of paragraph
-			if wordCount > 0 {
-				avgRestSize := totalSize / float64(wordCount)
-				// Use 1.15x ratio (15% larger) to catch subsection headings
-				// that are subtly larger than body text
-				if maxFontSize >= avgRestSize*1.15 && maxFontSize >= bodyFontSize*config.MinHeadingFontSize {
-					fontSizeCount[maxFontSize]++
-				}
-			}
-		} else {
-			// Single-line paragraph - count if larger than body text
-			if maxFontSize >= bodyFontSize*config.MinHeadingFontSize {
-				fontSizeCount[maxFontSize]++
+	clusterMembers := make(map[int]int)
+	for _, v := range samples {
+		bestCluster := 0
+		bestDist := math.Abs(v - centroids[0])
+		for ci := 1; ci < len(centroids); ci++ {
+			d := math.Abs(v - centroids[ci])
+			if d < bestDist {
+				bestDist = d
+				bestCluster = ci
 			}
 		}
+		clusterMembers[bestCluster]++
 	}
 
-	// Sort distinct heading font sizes descending
-	var headingSizes []float64
-	for size := range fontSizeCount {
-		headingSizes = append(headingSizes, size)
+	bodyClusterIdx := 0
+	bodyClusterCount := 0
+	for ci, cnt := range clusterMembers {
+		if cnt > bodyClusterCount {
+			bodyClusterCount = cnt
+			bodyClusterIdx = ci
+		}
 	}
-	sort.Float64s(headingSizes)
-	// Reverse to descending order
-	for i := 0; i < len(headingSizes)/2; i++ {
-		j := len(headingSizes) - 1 - i
-		headingSizes[i], headingSizes[j] = headingSizes[j], headingSizes[i]
-	}
+	bodyClusterCentroid := centroids[bodyClusterIdx]
 
-	// Map font sizes to heading levels (H1 = largest, up to H6)
-	sizeToLevel := make(map[float64]int)
-	for i, size := range headingSizes {
-		if i < 6 {
-			sizeToLevel[size] = i + 1
+	var headingCentroids []float64
+	for ci := len(centroids) - 1; ci >= 0; ci-- {
+		if centroids[ci] > bodyClusterCentroid && centroids[ci] >= bodyFontSize*config.MinHeadingFontSize {
+			headingCentroids = append(headingCentroids, centroids[ci])
 		}
 	}
 
-	// Mark headings in paragraphs
+	centroidToLevel := make(map[int]int)
+	for hi, hc := range headingCentroids {
+		for ci, c := range centroids {
+			if c == hc {
+				centroidToLevel[ci] = hi + 1
+				break
+			}
+		}
+	}
+
+	assignCluster := func(fontSize float64) int {
+		bestCluster := 0
+		bestDist := math.Abs(fontSize - centroids[0])
+		for ci := 1; ci < len(centroids); ci++ {
+			d := math.Abs(fontSize - centroids[ci])
+			if d < bestDist {
+				bestDist = d
+				bestCluster = ci
+			}
+		}
+		return bestCluster
+	}
+
 	for i := range paragraphs {
 		para := &paragraphs[i]
 
@@ -537,10 +684,7 @@ func detectHeadings(paragraphs []Paragraph, config Config) {
 			continue
 		}
 
-		// For multi-line paragraphs, check if the first line is a subsection heading
-		// (larger font than the rest of the paragraph)
 		if len(para.Lines) > 1 {
-			// Get font size of first line
 			var firstLineMaxSize float64
 			for _, word := range para.Lines[0].Words {
 				if word.FontSize > firstLineMaxSize {
@@ -548,7 +692,6 @@ func detectHeadings(paragraphs []Paragraph, config Config) {
 				}
 			}
 
-			// Get average font size of remaining lines
 			var totalSize float64
 			var wordCount int
 			for li := 1; li < len(para.Lines); li++ {
@@ -560,26 +703,19 @@ func detectHeadings(paragraphs []Paragraph, config Config) {
 
 			if wordCount > 0 {
 				avgRestSize := totalSize / float64(wordCount)
-
-				// If first line is significantly larger (15%+) and meets heading threshold,
-				// treat it as a subsection heading
 				if firstLineMaxSize >= avgRestSize*1.15 && firstLineMaxSize >= bodyFontSize*config.MinHeadingFontSize {
-					// Check if it's in our known heading sizes
-					if level, isHeading := sizeToLevel[firstLineMaxSize]; isHeading {
+					cluster := assignCluster(firstLineMaxSize)
+					if level, ok := centroidToLevel[cluster]; ok {
 						para.IsHeading = true
 						para.HeadingLevel = level
 					}
 				}
 			}
-
-			// Skip further checks for multi-line paragraphs
 			continue
 		}
 
-		// Single-line paragraph handling
 		line := para.Lines[0]
 
-		// Get maximum font size in line
 		var maxFontSize float64
 		for _, word := range line.Words {
 			if word.FontSize > maxFontSize {
@@ -587,12 +723,11 @@ func detectHeadings(paragraphs []Paragraph, config Config) {
 			}
 		}
 
-		// Check if this line is a heading based on font size
-		if level, isHeading := sizeToLevel[maxFontSize]; isHeading {
+		cluster := assignCluster(maxFontSize)
+		if level, ok := centroidToLevel[cluster]; ok {
 			para.IsHeading = true
 			para.HeadingLevel = level
 		} else {
-			// Also check if bold + slightly larger
 			isBold := false
 			for _, word := range line.Words {
 				if word.IsBold {
@@ -601,10 +736,9 @@ func detectHeadings(paragraphs []Paragraph, config Config) {
 				}
 			}
 
-			// Bold text that's at least 1.05x body size can be a heading
 			if isBold && maxFontSize >= bodyFontSize*1.05 && maxFontSize >= bodyFontSize*config.MinHeadingFontSize {
 				para.IsHeading = true
-				para.HeadingLevel = 6 // Default to H6 for bold-only headings
+				para.HeadingLevel = 6
 			}
 		}
 	}
@@ -706,15 +840,21 @@ func stdDev(values []float64) float64 {
 	return math.Sqrt(sumSquares / float64(len(values)))
 }
 
-// mergeCloseWords merges words that are very close together horizontally.
-// This handles PDFs with inconsistent spacing where words are split incorrectly.
-// Words with gaps < 2.0 pixels are merged together (except punctuation).
+func getLineAvgFontSize(words []EnrichedWord) float64 {
+	if len(words) == 0 {
+		return 12.0
+	}
+	var total float64
+	for _, w := range words {
+		total += w.FontSize
+	}
+	return total / float64(len(words))
+}
+
 func mergeCloseWords(words []EnrichedWord) []EnrichedWord {
 	if len(words) <= 1 {
 		return words
 	}
-
-	const gapThreshold = 2.0 // pixels
 
 	var merged []EnrichedWord
 	var currentMerge []EnrichedWord
@@ -725,24 +865,32 @@ func mergeCloseWords(words []EnrichedWord) []EnrichedWord {
 			continue
 		}
 
-		// Calculate gap from previous word
 		prevWord := currentMerge[len(currentMerge)-1]
 		gap := word.Box.X0 - prevWord.Box.X1
 
-		// Check if current word is punctuation that should stay separate
-		isPunctuation := false
+		isPunct := false
 		if len(word.Text) == 1 {
 			r := []rune(word.Text)[0]
-			isPunctuation = r == '.' || r == ',' || r == ';' || r == ':' ||
+			isPunct = r == '.' || r == ',' || r == ';' || r == ':' ||
 				r == '!' || r == '?' || r == '-' || r == '(' || r == ')' ||
 				r == '[' || r == ']' || r == '{' || r == '}'
 		}
 
-		// Merge if gap is small and not punctuation
-		if gap < gapThreshold && !isPunctuation {
+		avgFontSize := (prevWord.FontSize + word.FontSize) / 2
+		gapThreshold := 0.15 * avgFontSize
+
+		overlapY0 := math.Max(prevWord.Box.Y0, word.Box.Y0)
+		overlapY1 := math.Min(prevWord.Box.Y1, word.Box.Y1)
+		overlapHeight := overlapY1 - overlapY0
+		minHeight := math.Min(prevWord.Box.Height(), word.Box.Height())
+		verticalOverlap := false
+		if minHeight > 0 {
+			verticalOverlap = overlapHeight/minHeight > 0.3
+		}
+
+		if gap < gapThreshold && !isPunct && verticalOverlap {
 			currentMerge = append(currentMerge, word)
 		} else {
-			// Finish current merge and start new one
 			if len(currentMerge) > 1 {
 				merged = append(merged, mergeWordGroup(currentMerge))
 			} else {
@@ -751,7 +899,6 @@ func mergeCloseWords(words []EnrichedWord) []EnrichedWord {
 			currentMerge = []EnrichedWord{word}
 		}
 
-		// Handle last word
 		if i == len(words)-1 {
 			if len(currentMerge) > 1 {
 				merged = append(merged, mergeWordGroup(currentMerge))
@@ -773,9 +920,17 @@ func mergeWordGroup(words []EnrichedWord) EnrichedWord {
 		return words[0]
 	}
 
-	// Concatenate text
+	// Concatenate text, inserting a space at case boundaries to avoid
+	// fusing words like "by" + "Netwealth" → "byNetwealth".
 	var text string
 	for _, word := range words {
+		if len(text) > 0 && len(word.Text) > 0 {
+			lastRune := rune(text[len(text)-1])
+			firstRune := []rune(word.Text)[0]
+			if isLower(lastRune) && isUpper(firstRune) {
+				text += " "
+			}
+		}
 		text += word.Text
 	}
 
