@@ -1,4 +1,4 @@
-package pdfmarkdown_test
+package docmill_test
 
 import (
 	"os"
@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	pdfmarkdown "github.com/ivanvanderbyl/pdfmarkdown"
+	docmill "github.com/ivanvanderbyl/docmill"
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +23,7 @@ func TestConverter_SamplePDF(t *testing.T) {
 	instance, err := pool.GetInstance(time.Second * 30)
 	require.NoError(t, err)
 
-	converter := pdfmarkdown.NewConverter(instance)
+	converter := docmill.NewConverter(instance)
 
 	// Test with the sample PDF
 	samplePath := filepath.Join("testdata", "simple.pdf")

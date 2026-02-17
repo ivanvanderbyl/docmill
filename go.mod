@@ -1,4 +1,4 @@
-module github.com/ivanvanderbyl/pdfmarkdown
+module github.com/ivanvanderbyl/docmill
 
 go 1.25.1
 

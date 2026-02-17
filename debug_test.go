@@ -1,4 +1,4 @@
-package pdfmarkdown_test
+package docmill_test
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/stretchr/testify/require"
 
-	pdfmarkdown "github.com/ivanvanderbyl/pdfmarkdown"
+	docmill "github.com/ivanvanderbyl/docmill"
 )
 
 func TestDebug_SamplePDF_LineSpacing(t *testing.T) {
@@ -47,8 +47,8 @@ func TestDebug_SamplePDF_LineSpacing(t *testing.T) {
 		Page: pageResp.Page,
 	})
 
-	config := pdfmarkdown.DefaultConfig()
-	page, err := pdfmarkdown.ExtractPage(instance, pageResp.Page, 1, config)
+	config := docmill.DefaultConfig()
+	page, err := docmill.ExtractPage(instance, pageResp.Page, 1, config)
 	require.NoError(t, err)
 
 	fmt.Printf("\n=== Page 1 Analysis ===\n")

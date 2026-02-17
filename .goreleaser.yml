@@ -1,15 +1,15 @@
 version: 2
 
-project_name: pdfmarkdown
+project_name: docmill
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - id: pdfmarkdown
-    main: ./cmd/pdfmarkdown
-    binary: pdfmarkdown
+  - id: docmill
+    main: ./cmd/docmill
+    binary: docmill
     env:
       - CGO_ENABLED=0
     goos:
@@ -48,7 +48,7 @@ changelog:
 release:
   github:
     owner: ivanvanderbyl
-    name: pdfmarkdown
+    name: docmill
   draft: false
   prerelease: auto
   name_template: "{{.Tag}}"

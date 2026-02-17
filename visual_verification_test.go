@@ -1,4 +1,4 @@
-package pdfmarkdown_test
+package docmill_test
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	pdfmarkdown "github.com/ivanvanderbyl/pdfmarkdown"
+	docmill "github.com/ivanvanderbyl/docmill"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/stretchr/testify/require"
@@ -44,8 +44,8 @@ func TestVisualVerification_Issue140(t *testing.T) {
 		Page: pageResp.Page,
 	})
 
-	config := pdfmarkdown.DefaultConfig()
-	page, err := pdfmarkdown.ExtractPage(instance, pageResp.Page, 1, config)
+	config := docmill.DefaultConfig()
+	page, err := docmill.ExtractPage(instance, pageResp.Page, 1, config)
 	require.NoError(t, err)
 
 	t.Logf("\n=== VISUAL VERIFICATION: Issue-140 ===\n")

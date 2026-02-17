@@ -9,7 +9,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/ivanvanderbyl/pdfmarkdown"
+	"github.com/ivanvanderbyl/docmill"
 )
 
 var (
@@ -20,7 +20,7 @@ var (
 
 func main() {
 	cmd := &cli.Command{
-		Name:    "pdfmarkdown",
+		Name:    "docmill",
 		Usage:   "Convert PDF files to markdown",
 		Version: version,
 		Flags: []cli.Flag{
@@ -120,7 +120,7 @@ func convertPDF(_ context.Context, cmd *cli.Command) error {
 	chunkOverlap := cmd.Int("chunk-overlap")
 	chunkRepeatHeadings := cmd.Bool("chunk-repeat-headings")
 
-	config := pdfmarkdown.DefaultConfig()
+	config := docmill.DefaultConfig()
 	config.EnableMetricsLogging = cmd.Bool("metrics")
 	config.IncludePageBreaks = cmd.Bool("page-breaks")
 	config.MinHeadingFontSize = cmd.Float("min-heading-font-size")
@@ -129,7 +129,7 @@ func convertPDF(_ context.Context, cmd *cli.Command) error {
 	config.UseAdaptiveThresholds = cmd.Bool("adaptive-thresholds")
 	config.MaxConcurrency = int(cmd.Int("max-concurrency"))
 
-	converter, err := pdfmarkdown.NewWithConfig(config)
+	converter, err := docmill.NewWithConfig(config)
 	if err != nil {
 		return fmt.Errorf("failed to initialise converter: %w", err)
 	}
@@ -143,7 +143,7 @@ func convertPDF(_ context.Context, cmd *cli.Command) error {
 	fmt.Fprintf(os.Stderr, "Processing PDF with %d pages...\n", info.PageCount)
 
 	if chunkMode {
-		cc := pdfmarkdown.ChunkConfig{
+		cc := docmill.ChunkConfig{
 			MaxTokens:      int(chunkMaxTokens),
 			OverlapTokens:  int(chunkOverlap),
 			RepeatHeadings: chunkRepeatHeadings,

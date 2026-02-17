@@ -1,4 +1,4 @@
-package pdfmarkdown_test
+package docmill_test
 
 import (
 	"os"
@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pdfmarkdown "github.com/ivanvanderbyl/pdfmarkdown"
+	docmill "github.com/ivanvanderbyl/docmill"
 )
 
 // setupPDFium initialises a pdfium instance for testing.
@@ -38,7 +38,7 @@ func setupPDFium(t *testing.T) pdfium.Pdfium {
 
 func TestConverter_ConvertBytes(t *testing.T) {
 	instance := setupPDFium(t)
-	converter := pdfmarkdown.NewConverter(instance)
+	converter := docmill.NewConverter(instance)
 
 	// Create a simple test PDF
 	testPDFPath := filepath.Join("testdata", "simple.pdf")
@@ -59,7 +59,7 @@ func TestConverter_ConvertBytes(t *testing.T) {
 
 func TestConverter_ConvertFile(t *testing.T) {
 	instance := setupPDFium(t)
-	converter := pdfmarkdown.NewConverter(instance)
+	converter := docmill.NewConverter(instance)
 
 	testPDFPath := filepath.Join("testdata", "simple.pdf")
 	if _, err := os.Stat(testPDFPath); os.IsNotExist(err) {
@@ -74,7 +74,7 @@ func TestConverter_ConvertFile(t *testing.T) {
 
 func TestConverter_GetDocumentInfo(t *testing.T) {
 	instance := setupPDFium(t)
-	converter := pdfmarkdown.NewConverter(instance)
+	converter := docmill.NewConverter(instance)
 
 	testPDFPath := filepath.Join("testdata", "simple.pdf")
 	if _, err := os.Stat(testPDFPath); os.IsNotExist(err) {
@@ -89,7 +89,7 @@ func TestConverter_GetDocumentInfo(t *testing.T) {
 
 func TestConverter_ConvertPageRange(t *testing.T) {
 	instance := setupPDFium(t)
-	converter := pdfmarkdown.NewConverter(instance)
+	converter := docmill.NewConverter(instance)
 
 	testPDFPath := filepath.Join("testdata", "multi_page.pdf")
 	if _, err := os.Stat(testPDFPath); os.IsNotExist(err) {
@@ -124,23 +124,23 @@ func TestEnrichedWord_IsBulletOrNumber(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			word := pdfmarkdown.EnrichedWord{Text: tt.text}
+			word := docmill.EnrichedWord{Text: tt.text}
 			assert.Equal(t, tt.expected, word.IsBulletOrNumber())
 		})
 	}
 }
 
 func TestParagraph_Text(t *testing.T) {
-	para := pdfmarkdown.Paragraph{
-		Lines: []pdfmarkdown.Line{
+	para := docmill.Paragraph{
+		Lines: []docmill.Line{
 			{
-				Words: []pdfmarkdown.EnrichedWord{
+				Words: []docmill.EnrichedWord{
 					{Text: "Hello"},
 					{Text: "World"},
 				},
 			},
 			{
-				Words: []pdfmarkdown.EnrichedWord{
+				Words: []docmill.EnrichedWord{
 					{Text: "Second"},
 					{Text: "Line"},
 				},
@@ -153,15 +153,15 @@ func TestParagraph_Text(t *testing.T) {
 }
 
 func TestDocument_ToMarkdown_Headings(t *testing.T) {
-	doc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{
+	doc := &docmill.Document{
+		Pages: []docmill.Page{
 			{
 				Number: 1,
-				Paragraphs: []pdfmarkdown.Paragraph{
+				Paragraphs: []docmill.Paragraph{
 					{
-						Lines: []pdfmarkdown.Line{
+						Lines: []docmill.Line{
 							{
-								Words: []pdfmarkdown.EnrichedWord{
+								Words: []docmill.EnrichedWord{
 									{Text: "Main", FontSize: 24, IsBold: true},
 									{Text: "Heading", FontSize: 24, IsBold: true},
 								},
@@ -171,9 +171,9 @@ func TestDocument_ToMarkdown_Headings(t *testing.T) {
 						HeadingLevel: 1,
 					},
 					{
-						Lines: []pdfmarkdown.Line{
+						Lines: []docmill.Line{
 							{
-								Words: []pdfmarkdown.EnrichedWord{
+								Words: []docmill.EnrichedWord{
 									{Text: "Some", FontSize: 12},
 									{Text: "text", FontSize: 12},
 								},
@@ -185,21 +185,21 @@ func TestDocument_ToMarkdown_Headings(t *testing.T) {
 		},
 	}
 
-	markdown := doc.ToMarkdown(pdfmarkdown.DefaultConfig())
+	markdown := doc.ToMarkdown(docmill.DefaultConfig())
 	assert.Contains(t, markdown, "# Main Heading")
 	assert.Contains(t, markdown, "Some text")
 }
 
 func TestDocument_ToMarkdown_Lists(t *testing.T) {
-	doc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{
+	doc := &docmill.Document{
+		Pages: []docmill.Page{
 			{
 				Number: 1,
-				Paragraphs: []pdfmarkdown.Paragraph{
+				Paragraphs: []docmill.Paragraph{
 					{
-						Lines: []pdfmarkdown.Line{
+						Lines: []docmill.Line{
 							{
-								Words: []pdfmarkdown.EnrichedWord{
+								Words: []docmill.EnrichedWord{
 									{Text: "•"},
 									{Text: "First"},
 									{Text: "item"},
@@ -209,9 +209,9 @@ func TestDocument_ToMarkdown_Lists(t *testing.T) {
 						IsList: true,
 					},
 					{
-						Lines: []pdfmarkdown.Line{
+						Lines: []docmill.Line{
 							{
-								Words: []pdfmarkdown.EnrichedWord{
+								Words: []docmill.EnrichedWord{
 									{Text: "•"},
 									{Text: "Second"},
 									{Text: "item"},
@@ -225,7 +225,7 @@ func TestDocument_ToMarkdown_Lists(t *testing.T) {
 		},
 	}
 
-	markdown := doc.ToMarkdown(pdfmarkdown.DefaultConfig())
+	markdown := doc.ToMarkdown(docmill.DefaultConfig())
 	lines := strings.Split(strings.TrimSpace(markdown), "\n")
 
 	// Each list item should be on its own line
@@ -234,15 +234,15 @@ func TestDocument_ToMarkdown_Lists(t *testing.T) {
 }
 
 func TestDocument_ToMarkdown_CodeBlocks(t *testing.T) {
-	doc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{
+	doc := &docmill.Document{
+		Pages: []docmill.Page{
 			{
 				Number: 1,
-				Paragraphs: []pdfmarkdown.Paragraph{
+				Paragraphs: []docmill.Paragraph{
 					{
-						Lines: []pdfmarkdown.Line{
+						Lines: []docmill.Line{
 							{
-								Words: []pdfmarkdown.EnrichedWord{
+								Words: []docmill.EnrichedWord{
 									{Text: "func", IsMonospace: true},
 									{Text: "main()", IsMonospace: true},
 								},
@@ -255,21 +255,21 @@ func TestDocument_ToMarkdown_CodeBlocks(t *testing.T) {
 		},
 	}
 
-	markdown := doc.ToMarkdown(pdfmarkdown.DefaultConfig())
+	markdown := doc.ToMarkdown(docmill.DefaultConfig())
 	assert.Contains(t, markdown, "```")
 	assert.Contains(t, markdown, "func main()")
 }
 
 func TestDocument_ToMarkdown_InlineFormatting(t *testing.T) {
-	doc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{
+	doc := &docmill.Document{
+		Pages: []docmill.Page{
 			{
 				Number: 1,
-				Paragraphs: []pdfmarkdown.Paragraph{
+				Paragraphs: []docmill.Paragraph{
 					{
-						Lines: []pdfmarkdown.Line{
+						Lines: []docmill.Line{
 							{
-								Words: []pdfmarkdown.EnrichedWord{
+								Words: []docmill.EnrichedWord{
 									{Text: "This", IsBold: false},
 									{Text: "is", IsBold: false},
 									{Text: "bold", IsBold: true},
@@ -285,14 +285,14 @@ func TestDocument_ToMarkdown_InlineFormatting(t *testing.T) {
 		},
 	}
 
-	markdown := doc.ToMarkdown(pdfmarkdown.DefaultConfig())
+	markdown := doc.ToMarkdown(docmill.DefaultConfig())
 	assert.Contains(t, markdown, "**bold**")
 	assert.Contains(t, markdown, "*italic*")
 	assert.Contains(t, markdown, "This is")
 }
 
 func TestRect_Methods(t *testing.T) {
-	rect := pdfmarkdown.Rect{
+	rect := docmill.Rect{
 		X0: 10,
 		Y0: 20,
 		X1: 50,

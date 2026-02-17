@@ -1,11 +1,11 @@
-package pdfmarkdown_test
+package docmill_test
 
 import (
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/ivanvanderbyl/pdfmarkdown"
+	"github.com/ivanvanderbyl/docmill"
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +23,7 @@ func TestProcessingMetrics(t *testing.T) {
 	instance, err := pool.GetInstance(time.Second * 30)
 	require.NoError(t, err)
 
-	converter := pdfmarkdown.NewConverter(instance)
+	converter := docmill.NewConverter(instance)
 
 	pdfPath := filepath.Join("testdata", "simple.pdf")
 	markdown, metrics, err := converter.ConvertFileWithMetrics(pdfPath)
@@ -80,10 +80,10 @@ func TestMetricsLogging(t *testing.T) {
 	require.NoError(t, err)
 
 	// Enable metrics logging
-	config := pdfmarkdown.DefaultConfig()
+	config := docmill.DefaultConfig()
 	config.EnableMetricsLogging = true
 
-	converter := pdfmarkdown.NewConverterWithConfig(instance, config)
+	converter := docmill.NewConverterWithConfig(instance, config)
 
 	pdfPath := filepath.Join("testdata", "simple.pdf")
 	markdown, err := converter.ConvertFile(pdfPath)

@@ -1,4 +1,4 @@
-package pdfmarkdown
+package docmill
 
 // Edge represents a horizontal or vertical line segment used for table detection.
 // Based on pdfplumber's edge structure.

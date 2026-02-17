@@ -1,4 +1,4 @@
-package pdfmarkdown_test
+package docmill_test
 
 import (
 	"os"
@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pdfmarkdown "github.com/ivanvanderbyl/pdfmarkdown"
+	docmill "github.com/ivanvanderbyl/docmill"
 )
 
 func newTestInstance(t *testing.T) interface{ Close() error } {
@@ -29,21 +29,21 @@ func newTestInstance(t *testing.T) interface{ Close() error } {
 }
 
 func TestToChunks_BasicStructure(t *testing.T) {
-	doc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{
+	doc := &docmill.Document{
+		Pages: []docmill.Page{
 			{
 				Number: 1,
-				Paragraphs: []pdfmarkdown.Paragraph{
+				Paragraphs: []docmill.Paragraph{
 					{
 						IsHeading:    true,
 						HeadingLevel: 1,
-						Lines: []pdfmarkdown.Line{
-							{Words: []pdfmarkdown.EnrichedWord{{Text: "Introduction"}}},
+						Lines: []docmill.Line{
+							{Words: []docmill.EnrichedWord{{Text: "Introduction"}}},
 						},
 					},
 					{
-						Lines: []pdfmarkdown.Line{
-							{Words: []pdfmarkdown.EnrichedWord{{Text: "This"}, {Text: "is"}, {Text: "a"}, {Text: "test"}, {Text: "paragraph."}}},
+						Lines: []docmill.Line{
+							{Words: []docmill.EnrichedWord{{Text: "This"}, {Text: "is"}, {Text: "a"}, {Text: "test"}, {Text: "paragraph."}}},
 						},
 					},
 				},
@@ -51,8 +51,8 @@ func TestToChunks_BasicStructure(t *testing.T) {
 		},
 	}
 
-	cc := pdfmarkdown.ChunkConfig{MaxTokens: 2048}
-	chunks := doc.ToChunks(pdfmarkdown.DefaultConfig(), cc)
+	cc := docmill.ChunkConfig{MaxTokens: 2048}
+	chunks := doc.ToChunks(docmill.DefaultConfig(), cc)
 
 	require.NotEmpty(t, chunks)
 	assert.Equal(t, 0, chunks[0].Index)
@@ -63,19 +63,19 @@ func TestToChunks_BasicStructure(t *testing.T) {
 }
 
 func TestToChunks_SplitsOnMaxTokens(t *testing.T) {
-	var paragraphs []pdfmarkdown.Paragraph
-	paragraphs = append(paragraphs, pdfmarkdown.Paragraph{
+	var paragraphs []docmill.Paragraph
+	paragraphs = append(paragraphs, docmill.Paragraph{
 		IsHeading:    true,
 		HeadingLevel: 1,
-		Lines: []pdfmarkdown.Line{
-			{Words: []pdfmarkdown.EnrichedWord{{Text: "Title"}}},
+		Lines: []docmill.Line{
+			{Words: []docmill.EnrichedWord{{Text: "Title"}}},
 		},
 	})
 
 	for i := 0; i < 20; i++ {
-		paragraphs = append(paragraphs, pdfmarkdown.Paragraph{
-			Lines: []pdfmarkdown.Line{
-				{Words: []pdfmarkdown.EnrichedWord{
+		paragraphs = append(paragraphs, docmill.Paragraph{
+			Lines: []docmill.Line{
+				{Words: []docmill.EnrichedWord{
 					{Text: "Lorem"}, {Text: "ipsum"}, {Text: "dolor"}, {Text: "sit"}, {Text: "amet,"},
 					{Text: "consectetur"}, {Text: "adipiscing"}, {Text: "elit."}, {Text: "Sed"}, {Text: "do"},
 					{Text: "eiusmod"}, {Text: "tempor"}, {Text: "incididunt"}, {Text: "ut"}, {Text: "labore."},
@@ -84,14 +84,14 @@ func TestToChunks_SplitsOnMaxTokens(t *testing.T) {
 		})
 	}
 
-	doc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{
+	doc := &docmill.Document{
+		Pages: []docmill.Page{
 			{Number: 1, Paragraphs: paragraphs},
 		},
 	}
 
-	cc := pdfmarkdown.ChunkConfig{MaxTokens: 64}
-	chunks := doc.ToChunks(pdfmarkdown.DefaultConfig(), cc)
+	cc := docmill.ChunkConfig{MaxTokens: 64}
+	chunks := doc.ToChunks(docmill.DefaultConfig(), cc)
 
 	require.Greater(t, len(chunks), 1, "should produce multiple chunks with small MaxTokens")
 	for _, chunk := range chunks {
@@ -101,29 +101,29 @@ func TestToChunks_SplitsOnMaxTokens(t *testing.T) {
 }
 
 func TestToChunks_HeadingPathTracking(t *testing.T) {
-	doc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{
+	doc := &docmill.Document{
+		Pages: []docmill.Page{
 			{
 				Number: 1,
-				Paragraphs: []pdfmarkdown.Paragraph{
+				Paragraphs: []docmill.Paragraph{
 					{
 						IsHeading: true, HeadingLevel: 1,
-						Lines: []pdfmarkdown.Line{{Words: []pdfmarkdown.EnrichedWord{{Text: "Chapter"}, {Text: "One"}}}},
+						Lines: []docmill.Line{{Words: []docmill.EnrichedWord{{Text: "Chapter"}, {Text: "One"}}}},
 					},
 					{
 						IsHeading: true, HeadingLevel: 2,
-						Lines: []pdfmarkdown.Line{{Words: []pdfmarkdown.EnrichedWord{{Text: "Section"}, {Text: "A"}}}},
+						Lines: []docmill.Line{{Words: []docmill.EnrichedWord{{Text: "Section"}, {Text: "A"}}}},
 					},
 					{
-						Lines: []pdfmarkdown.Line{{Words: []pdfmarkdown.EnrichedWord{{Text: "Content"}, {Text: "here."}}}},
+						Lines: []docmill.Line{{Words: []docmill.EnrichedWord{{Text: "Content"}, {Text: "here."}}}},
 					},
 				},
 			},
 		},
 	}
 
-	cc := pdfmarkdown.ChunkConfig{MaxTokens: 2048}
-	chunks := doc.ToChunks(pdfmarkdown.DefaultConfig(), cc)
+	cc := docmill.ChunkConfig{MaxTokens: 2048}
+	chunks := doc.ToChunks(docmill.DefaultConfig(), cc)
 
 	require.Len(t, chunks, 1)
 	require.Len(t, chunks[0].HeadingPath, 1)
@@ -131,15 +131,15 @@ func TestToChunks_HeadingPathTracking(t *testing.T) {
 }
 
 func TestToChunks_RepeatHeadings(t *testing.T) {
-	var paragraphs []pdfmarkdown.Paragraph
-	paragraphs = append(paragraphs, pdfmarkdown.Paragraph{
+	var paragraphs []docmill.Paragraph
+	paragraphs = append(paragraphs, docmill.Paragraph{
 		IsHeading: true, HeadingLevel: 1,
-		Lines: []pdfmarkdown.Line{{Words: []pdfmarkdown.EnrichedWord{{Text: "Main"}, {Text: "Title"}}}},
+		Lines: []docmill.Line{{Words: []docmill.EnrichedWord{{Text: "Main"}, {Text: "Title"}}}},
 	})
 	for i := 0; i < 30; i++ {
-		paragraphs = append(paragraphs, pdfmarkdown.Paragraph{
-			Lines: []pdfmarkdown.Line{
-				{Words: []pdfmarkdown.EnrichedWord{
+		paragraphs = append(paragraphs, docmill.Paragraph{
+			Lines: []docmill.Line{
+				{Words: []docmill.EnrichedWord{
 					{Text: "Some"}, {Text: "content"}, {Text: "paragraph"}, {Text: "number"},
 					{Text: "with"}, {Text: "enough"}, {Text: "words"}, {Text: "to"}, {Text: "fill."},
 				}},
@@ -147,17 +147,17 @@ func TestToChunks_RepeatHeadings(t *testing.T) {
 		})
 	}
 
-	doc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{
+	doc := &docmill.Document{
+		Pages: []docmill.Page{
 			{Number: 1, Paragraphs: paragraphs},
 		},
 	}
 
-	cc := pdfmarkdown.ChunkConfig{
+	cc := docmill.ChunkConfig{
 		MaxTokens:      64,
 		RepeatHeadings: true,
 	}
-	chunks := doc.ToChunks(pdfmarkdown.DefaultConfig(), cc)
+	chunks := doc.ToChunks(docmill.DefaultConfig(), cc)
 
 	require.Greater(t, len(chunks), 1)
 	for i, chunk := range chunks {
@@ -168,11 +168,11 @@ func TestToChunks_RepeatHeadings(t *testing.T) {
 }
 
 func TestToChunks_Overlap(t *testing.T) {
-	var paragraphs []pdfmarkdown.Paragraph
+	var paragraphs []docmill.Paragraph
 	for i := 0; i < 10; i++ {
-		paragraphs = append(paragraphs, pdfmarkdown.Paragraph{
-			Lines: []pdfmarkdown.Line{
-				{Words: []pdfmarkdown.EnrichedWord{
+		paragraphs = append(paragraphs, docmill.Paragraph{
+			Lines: []docmill.Line{
+				{Words: []docmill.EnrichedWord{
 					{Text: "Paragraph"}, {Text: "number"}, {Text: "with"}, {Text: "several"},
 					{Text: "words"}, {Text: "to"}, {Text: "take"}, {Text: "up"}, {Text: "space."},
 				}},
@@ -180,41 +180,41 @@ func TestToChunks_Overlap(t *testing.T) {
 		})
 	}
 
-	doc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{
+	doc := &docmill.Document{
+		Pages: []docmill.Page{
 			{Number: 1, Paragraphs: paragraphs},
 		},
 	}
 
-	cc := pdfmarkdown.ChunkConfig{
+	cc := docmill.ChunkConfig{
 		MaxTokens:     32,
 		OverlapTokens: 16,
 	}
-	chunks := doc.ToChunks(pdfmarkdown.DefaultConfig(), cc)
+	chunks := doc.ToChunks(docmill.DefaultConfig(), cc)
 
 	require.Greater(t, len(chunks), 1, "should produce multiple chunks")
 }
 
 func TestToChunks_MultiPage(t *testing.T) {
-	doc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{
+	doc := &docmill.Document{
+		Pages: []docmill.Page{
 			{
 				Number: 1,
-				Paragraphs: []pdfmarkdown.Paragraph{
-					{Lines: []pdfmarkdown.Line{{Words: []pdfmarkdown.EnrichedWord{{Text: "Page"}, {Text: "one"}, {Text: "content."}}}}},
+				Paragraphs: []docmill.Paragraph{
+					{Lines: []docmill.Line{{Words: []docmill.EnrichedWord{{Text: "Page"}, {Text: "one"}, {Text: "content."}}}}},
 				},
 			},
 			{
 				Number: 2,
-				Paragraphs: []pdfmarkdown.Paragraph{
-					{Lines: []pdfmarkdown.Line{{Words: []pdfmarkdown.EnrichedWord{{Text: "Page"}, {Text: "two"}, {Text: "content."}}}}},
+				Paragraphs: []docmill.Paragraph{
+					{Lines: []docmill.Line{{Words: []docmill.EnrichedWord{{Text: "Page"}, {Text: "two"}, {Text: "content."}}}}},
 				},
 			},
 		},
 	}
 
-	cc := pdfmarkdown.ChunkConfig{MaxTokens: 2048}
-	config := pdfmarkdown.DefaultConfig()
+	cc := docmill.ChunkConfig{MaxTokens: 2048}
+	config := docmill.DefaultConfig()
 	config.IncludePageBreaks = false
 	chunks := doc.ToChunks(config, cc)
 
@@ -224,19 +224,19 @@ func TestToChunks_MultiPage(t *testing.T) {
 }
 
 func TestToChunks_EmptyDocument(t *testing.T) {
-	doc := &pdfmarkdown.Document{}
-	cc := pdfmarkdown.DefaultChunkConfig()
-	chunks := doc.ToChunks(pdfmarkdown.DefaultConfig(), cc)
+	doc := &docmill.Document{}
+	cc := docmill.DefaultChunkConfig()
+	chunks := doc.ToChunks(docmill.DefaultConfig(), cc)
 	assert.Empty(t, chunks)
 }
 
 func TestToChunks_CustomTokenEstimator(t *testing.T) {
-	doc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{
+	doc := &docmill.Document{
+		Pages: []docmill.Page{
 			{
 				Number: 1,
-				Paragraphs: []pdfmarkdown.Paragraph{
-					{Lines: []pdfmarkdown.Line{{Words: []pdfmarkdown.EnrichedWord{{Text: "Hello"}, {Text: "world."}}}}},
+				Paragraphs: []docmill.Paragraph{
+					{Lines: []docmill.Line{{Words: []docmill.EnrichedWord{{Text: "Hello"}, {Text: "world."}}}}},
 				},
 			},
 		},
@@ -252,17 +252,17 @@ func TestToChunks_CustomTokenEstimator(t *testing.T) {
 		return count + 1
 	}
 
-	cc := pdfmarkdown.ChunkConfig{
+	cc := docmill.ChunkConfig{
 		MaxTokens:      100,
 		EstimateTokens: wordCount,
 	}
-	chunks := doc.ToChunks(pdfmarkdown.DefaultConfig(), cc)
+	chunks := doc.ToChunks(docmill.DefaultConfig(), cc)
 	require.Len(t, chunks, 1)
 	assert.Greater(t, chunks[0].TokenCount, 0)
 }
 
 func TestDefaultEstimateTokens(t *testing.T) {
-	cc := pdfmarkdown.DefaultChunkConfig()
+	cc := docmill.DefaultChunkConfig()
 	assert.Nil(t, cc.EstimateTokens)
 	assert.Equal(t, 512, cc.MaxTokens)
 }
@@ -279,13 +279,13 @@ func TestConvertFileChunks(t *testing.T) {
 	instance, err := pool.GetInstance(time.Second * 30)
 	require.NoError(t, err)
 
-	converter := pdfmarkdown.NewConverter(instance)
+	converter := docmill.NewConverter(instance)
 	samplePath := filepath.Join("testdata", "issue-848.pdf")
 	if _, err := os.Stat(samplePath); os.IsNotExist(err) {
 		t.Skip("test PDF not found")
 	}
 
-	cc := pdfmarkdown.ChunkConfig{MaxTokens: 256}
+	cc := docmill.ChunkConfig{MaxTokens: 256}
 	chunks, err := converter.ConvertFileChunks(samplePath, cc)
 	require.NoError(t, err)
 	require.NotEmpty(t, chunks)
@@ -311,7 +311,7 @@ func TestConvertFileChunks_ConsistentWithToMarkdown(t *testing.T) {
 	instance, err := pool.GetInstance(time.Second * 30)
 	require.NoError(t, err)
 
-	converter := pdfmarkdown.NewConverter(instance)
+	converter := docmill.NewConverter(instance)
 	samplePath := filepath.Join("testdata", "issue-848.pdf")
 	if _, err := os.Stat(samplePath); os.IsNotExist(err) {
 		t.Skip("test PDF not found")
@@ -320,7 +320,7 @@ func TestConvertFileChunks_ConsistentWithToMarkdown(t *testing.T) {
 	md, err := converter.ConvertFile(samplePath)
 	require.NoError(t, err)
 
-	cc := pdfmarkdown.ChunkConfig{MaxTokens: 100_000}
+	cc := docmill.ChunkConfig{MaxTokens: 100_000}
 	chunks, err := converter.ConvertFileChunks(samplePath, cc)
 	require.NoError(t, err)
 

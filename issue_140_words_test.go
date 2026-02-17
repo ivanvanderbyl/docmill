@@ -1,11 +1,11 @@
-package pdfmarkdown_test
+package docmill_test
 
 import (
 	"path/filepath"
 	"testing"
 	"time"
 
-	pdfmarkdown "github.com/ivanvanderbyl/pdfmarkdown"
+	docmill "github.com/ivanvanderbyl/docmill"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/stretchr/testify/require"
@@ -42,8 +42,8 @@ func TestIssue140_WordExtraction(t *testing.T) {
 		Page: pageResp.Page,
 	})
 
-	config := pdfmarkdown.DefaultConfig()
-	page, err := pdfmarkdown.ExtractPage(instance, pageResp.Page, 1, config)
+	config := docmill.DefaultConfig()
+	page, err := docmill.ExtractPage(instance, pageResp.Page, 1, config)
 	require.NoError(t, err)
 
 	// Analyze first few paragraphs in detail

@@ -1,4 +1,4 @@
-package pdfmarkdown
+package docmill
 
 import (
 	"github.com/klippa-app/go-pdfium"

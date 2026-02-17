@@ -1,4 +1,4 @@
-package pdfmarkdown_test
+package docmill_test
 
 import (
 	"os"
@@ -10,7 +10,7 @@ import (
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/stretchr/testify/require"
 
-	pdfmarkdown "github.com/ivanvanderbyl/pdfmarkdown"
+	docmill "github.com/ivanvanderbyl/docmill"
 )
 
 func TestConverter_WithoutPageBreaks(t *testing.T) {
@@ -26,11 +26,11 @@ func TestConverter_WithoutPageBreaks(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create converter with page breaks disabled
-	config := pdfmarkdown.Config{
+	config := docmill.Config{
 		IncludePageBreaks:  false,
 		MinHeadingFontSize: 1.15,
 	}
-	converter := pdfmarkdown.NewConverterWithConfig(instance, config)
+	converter := docmill.NewConverterWithConfig(instance, config)
 
 	// Test with the sample PDF
 	samplePath := filepath.Join("testdata", "issue-848.pdf")
@@ -58,7 +58,7 @@ func TestConverter_WithPageBreaks(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use default config (page breaks enabled)
-	converter := pdfmarkdown.NewConverter(instance)
+	converter := docmill.NewConverter(instance)
 
 	samplePath := filepath.Join("testdata", "issue-848.pdf")
 	if _, err := os.Stat(samplePath); os.IsNotExist(err) {
@@ -85,11 +85,11 @@ func TestConverter_HeadingDetectionDisabled(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create converter with heading detection disabled
-	config := pdfmarkdown.Config{
+	config := docmill.Config{
 		IncludePageBreaks:  true,
 		MinHeadingFontSize: 0, // Disable heading detection
 	}
-	converter := pdfmarkdown.NewConverterWithConfig(instance, config)
+	converter := docmill.NewConverterWithConfig(instance, config)
 
 	samplePath := filepath.Join("testdata", "issue-848.pdf")
 	if _, err := os.Stat(samplePath); os.IsNotExist(err) {
