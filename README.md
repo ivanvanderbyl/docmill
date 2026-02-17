@@ -141,18 +141,12 @@ A CLI tool is provided for quick conversions:
 
 ### Installation
 
-Install directly using `go install`:
-
-```bash
-go install github.com/ivanvanderbyl/pdfmarkdown/cmd/pdfmarkdown@latest
-```
-
-Or build from source:
+Build from source:
 
 ```bash
 git clone https://github.com/ivanvanderbyl/pdfmarkdown.git
 cd pdfmarkdown
-go build -o bin/pdfmarkdown ./cmd/pdfmarkdown
+go install ./cmd/pdfmarkdown
 ```
 
 ### Usage
@@ -178,6 +172,16 @@ pdfmarkdown -i input.pdf -o output.md --metrics
 - `--start-page` - Start page number, 0-indexed (default: all pages)
 - `--end-page` - End page number, 0-indexed (default: all pages)
 - `-m, --metrics` - Enable processing time and statistics logging
+- `--page-breaks` - Add `---` separators between pages (default: true)
+- `--min-heading-font-size` - Minimum font size multiplier to detect headings, 0 disables (default: 1.15)
+- `--detect-tables` - Enable table detection and extraction (default: true)
+- `--segment-tables` - Use PDF-TREX segment-based table detection, better for tables without ruling lines (default: false)
+- `--adaptive-thresholds` - Enable document-specific threshold calculation based on spacing distribution (default: true)
+- `--max-concurrency` - Maximum pages processed concurrently during structure detection (default: 10)
+- `--chunk` - Output as JSON chunks instead of markdown
+- `--chunk-max-tokens` - Maximum tokens per chunk (default: 512)
+- `--chunk-overlap` - Number of overlap tokens between chunks (default: 0)
+- `--chunk-repeat-headings` - Repeat heading hierarchy at the start of each chunk
 
 ## Configuration Options
 

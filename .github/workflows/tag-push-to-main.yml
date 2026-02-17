@@ -1,0 +1,99 @@
+name: Tag push to main
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  tag-and-release:
+    # Skip merge commits from PRs — those are handled by tag-merged-pr.yml
+    if: ${{ !startsWith(github.event.head_commit.message, 'Merge pull request') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - name: Determine next version
+        id: next-version
+        run: python3 scripts/gh/determine_highest_version_prefix.py
+
+      - name: Tag commit
+        id: tag
+        env:
+          NEXT_VERSION: ${{ steps.next-version.outputs.version }}
+        run: |
+          tag_name="v${NEXT_VERSION}"
+          echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
+
+          if git rev-parse "${tag_name}" >/dev/null 2>&1; then
+            echo "Tag ${tag_name} already exists locally; skipping."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --tags origin "${tag_name}" >/dev/null 2>&1; then
+            echo "Tag ${tag_name} already exists on origin; skipping."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git tag "${tag_name}" "${{ github.sha }}"
+          git push origin "${tag_name}"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        if: steps.tag.outputs.created == 'true'
+        id: changelog
+        env:
+          TAG_NAME: ${{ steps.tag.outputs.tag_name }}
+        run: |
+          prev_tag=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -2 | tail -1)
+
+          if [ -n "$prev_tag" ] && [ "$prev_tag" != "$TAG_NAME" ]; then
+            changelog=$(git log ${prev_tag}..${TAG_NAME} --pretty=format:"- %s (%h)" --no-merges)
+          else
+            changelog=$(git log ${TAG_NAME} --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$changelog" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub release
+        if: steps.tag.outputs.created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ steps.tag.outputs.tag_name }}
+          CHANGELOG: ${{ steps.changelog.outputs.changelog }}
+        run: |
+          cat << EOF > /tmp/release-notes.md
+          ## What's Changed
+
+          $CHANGELOG
+
+          ## Installation
+
+          \`\`\`bash
+          go get github.com/ivanvanderbyl/pdfmarkdown@${TAG_NAME}
+          \`\`\`
+
+          **Full Changelog**: https://github.com/${{ github.repository }}/commits/${TAG_NAME}
+          EOF
+
+          gh release create "${TAG_NAME}" \
+            --title "${TAG_NAME}" \
+            --notes-file /tmp/release-notes.md \
+            --repo ${{ github.repository }}

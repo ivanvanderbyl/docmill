@@ -47,6 +47,36 @@ func main() {
 				Value:   false,
 			},
 			&cli.BoolFlag{
+				Name:  "page-breaks",
+				Usage: "Add '---' separators between pages",
+				Value: true,
+			},
+			&cli.FloatFlag{
+				Name:  "min-heading-font-size",
+				Usage: "Minimum font size multiplier to detect headings (0 disables)",
+				Value: 1.15,
+			},
+			&cli.BoolFlag{
+				Name:  "detect-tables",
+				Usage: "Enable table detection and extraction",
+				Value: true,
+			},
+			&cli.BoolFlag{
+				Name:  "segment-tables",
+				Usage: "Use PDF-TREX segment-based table detection (better for tables without ruling lines)",
+				Value: false,
+			},
+			&cli.BoolFlag{
+				Name:  "adaptive-thresholds",
+				Usage: "Enable document-specific threshold calculation based on spacing distribution",
+				Value: true,
+			},
+			&cli.IntFlag{
+				Name:  "max-concurrency",
+				Usage: "Maximum number of pages processed concurrently during structure detection",
+				Value: 10,
+			},
+			&cli.BoolFlag{
 				Name:  "chunk",
 				Usage: "Output as JSON chunks instead of markdown",
 				Value: false,
@@ -80,7 +110,6 @@ func convertPDF(_ context.Context, cmd *cli.Command) error {
 	outputPath := cmd.String("output")
 	startPage := cmd.Int("start-page")
 	endPage := cmd.Int("end-page")
-	enableMetrics := cmd.Bool("metrics")
 	chunkMode := cmd.Bool("chunk")
 	chunkMaxTokens := cmd.Int("chunk-max-tokens")
 	chunkOverlap := cmd.Int("chunk-overlap")
@@ -102,7 +131,13 @@ func convertPDF(_ context.Context, cmd *cli.Command) error {
 	}
 
 	config := pdfmarkdown.DefaultConfig()
-	config.EnableMetricsLogging = enableMetrics
+	config.EnableMetricsLogging = cmd.Bool("metrics")
+	config.IncludePageBreaks = cmd.Bool("page-breaks")
+	config.MinHeadingFontSize = cmd.Float("min-heading-font-size")
+	config.DetectTables = cmd.Bool("detect-tables")
+	config.UseSegmentBasedTables = cmd.Bool("segment-tables")
+	config.UseAdaptiveThresholds = cmd.Bool("adaptive-thresholds")
+	config.MaxConcurrency = int(cmd.Int("max-concurrency"))
 	converter := pdfmarkdown.NewConverterWithConfig(instance, config)
 
 	info, err := converter.GetDocumentInfo(inputPath)
