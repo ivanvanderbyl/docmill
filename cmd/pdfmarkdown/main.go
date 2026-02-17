@@ -12,10 +12,17 @@ import (
 	"github.com/ivanvanderbyl/pdfmarkdown"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	cmd := &cli.Command{
-		Name:  "pdfmarkdown",
-		Usage: "Convert PDF files to markdown",
+		Name:    "pdfmarkdown",
+		Usage:   "Convert PDF files to markdown",
+		Version: version,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "input",
