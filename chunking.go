@@ -8,7 +8,6 @@ import (
 	"github.com/klippa-app/go-pdfium/references"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/pkg/errors"
-	"github.com/sourcegraph/conc/stream"
 )
 
 type ChunkConfig struct {
@@ -296,45 +295,16 @@ func (d *Document) ToChunks(config Config, cc ChunkConfig) []Chunk {
 	return packChunks(blocks, cc)
 }
 
-func (c *Converter) extractDocument(docRef references.FPDF_DOCUMENT) (*Document, error) {
+func (c *Converter) extractDocument(doc references.FPDF_DOCUMENT) (*Document, error) {
 	pageCount, err := c.instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{
-		Document: docRef,
+		Document: doc,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get page count")
 	}
 
-	maxConc := c.config.MaxConcurrency
-	if maxConc < 1 {
-		maxConc = 10
-	}
-
-	rawPages := make([]*rawPageData, pageCount.PageCount)
-	for i := 0; i < pageCount.PageCount; i++ {
-		raw, err := c.extractRawPage(docRef, i)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to extract page %d", i+1)
-		}
-		rawPages[i] = raw
-	}
-
-	document := &Document{
-		Pages: make([]Page, pageCount.PageCount),
-	}
-	s := stream.New().WithMaxGoroutines(maxConc)
-	for i := 0; i < pageCount.PageCount; i++ {
-		idx := i
-		raw := rawPages[idx]
-		s.Go(func() stream.Callback {
-			page := buildPageStructure(raw, c.config)
-			return func() {
-				document.Pages[idx] = *page
-			}
-		})
-	}
-	s.Wait()
-
-	return document, nil
+	document, _, err := c.extractAndProcessPages(doc, 0, pageCount.PageCount-1)
+	return document, err
 }
 
 func (c *Converter) ConvertFileChunks(filePath string, cc ChunkConfig) ([]Chunk, error) {

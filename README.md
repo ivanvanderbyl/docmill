@@ -42,32 +42,16 @@ go get github.com/ivanvanderbyl/pdfmarkdown
 import (
     "fmt"
     "log"
-    "time"
 
-    "github.com/klippa-app/go-pdfium/webassembly"
     "github.com/ivanvanderbyl/pdfmarkdown"
 )
 
-// Initialise pdfium
-pool, err := webassembly.Init(webassembly.Config{
-    MinIdle:  1,
-    MaxIdle:  1,
-    MaxTotal: 1,
-})
+converter, err := pdfmarkdown.New()
 if err != nil {
     log.Fatal(err)
 }
-defer pool.Close()
+defer converter.Close()
 
-instance, err := pool.GetInstance(time.Second * 30)
-if err != nil {
-    log.Fatal(err)
-}
-
-// Create converter with default settings
-converter := pdfmarkdown.NewConverter(instance)
-
-// Convert file
 markdown, err := converter.ConvertFile("document.pdf")
 if err != nil {
     log.Fatal(err)
@@ -79,7 +63,6 @@ fmt.Println(markdown)
 ### Custom Configuration
 
 ```go
-// Create custom configuration
 config := pdfmarkdown.DefaultConfig()
 config.IncludePageBreaks = true
 config.DetectTables = true
@@ -88,8 +71,11 @@ config.UseAdaptiveThresholds = true
 config.MinHeadingFontSize = 1.2      // Adjust heading detection sensitivity
 config.EnableMetricsLogging = true   // Enable performance metrics
 
-// Create converter with custom config
-converter := pdfmarkdown.NewConverterWithConfig(instance, config)
+converter, err := pdfmarkdown.NewWithConfig(config)
+if err != nil {
+    log.Fatal(err)
+}
+defer converter.Close()
 
 markdown, err := converter.ConvertFile("document.pdf")
 ```
