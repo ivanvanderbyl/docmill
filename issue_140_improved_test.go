@@ -1,4 +1,4 @@
-package pdfmarkdown_test
+package docmill_test
 
 import (
 	"path/filepath"
@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	pdfmarkdown "github.com/ivanvanderbyl/pdfmarkdown"
+	docmill "github.com/ivanvanderbyl/docmill"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/stretchr/testify/require"
@@ -63,11 +63,11 @@ func TestIssue140_ImprovedTableDetection(t *testing.T) {
 	})
 
 	// Use segment-based detection which handles rotated tables better
-	config := pdfmarkdown.DefaultConfig()
+	config := docmill.DefaultConfig()
 	config.DetectTables = true
 	config.UseSegmentBasedTables = true
 
-	page, err := pdfmarkdown.ExtractPage(instance, pageResp.Page, 1, config)
+	page, err := docmill.ExtractPage(instance, pageResp.Page, 1, config)
 	require.NoError(t, err)
 
 	t.Logf("Detected %d tables", len(page.Tables))
@@ -83,8 +83,8 @@ func TestIssue140_ImprovedTableDetection(t *testing.T) {
 		t.Logf("Table dimensions: %d rows × %d columns", table.NumRows, table.NumCols)
 
 		// Log table content for manual inspection
-		mdDoc := &pdfmarkdown.Document{
-			Pages: []pdfmarkdown.Page{*page},
+		mdDoc := &docmill.Document{
+			Pages: []docmill.Page{*page},
 		}
 		markdown := mdDoc.ToMarkdown(config)
 		t.Logf("\n=== Table in Markdown ===\n%s", markdown)
@@ -126,8 +126,8 @@ func TestIssue140_ImprovedTableDetection(t *testing.T) {
 		t.Logf("Table has %d rows (expected ~4 data rows + 1 header)", table.NumRows)
 	} else {
 		// If no tables detected, verify content is still extractable
-		mdDoc := &pdfmarkdown.Document{
-			Pages: []pdfmarkdown.Page{*page},
+		mdDoc := &docmill.Document{
+			Pages: []docmill.Page{*page},
 		}
 		markdown := mdDoc.ToMarkdown(config)
 

@@ -1,4 +1,4 @@
-package pdfmarkdown_test
+package docmill_test
 
 import (
 	"path/filepath"

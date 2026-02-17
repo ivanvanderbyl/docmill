@@ -1,14 +1,14 @@
-package pdfmarkdown
+package docmill
 
 import (
 	"io"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/klippa-app/go-pdfium"
 	"github.com/klippa-app/go-pdfium/references"
 	"github.com/klippa-app/go-pdfium/requests"
+	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/pkg/errors"
 	"github.com/sourcegraph/conc/stream"
 )
@@ -86,9 +86,52 @@ func DefaultConfig() Config {
 type Converter struct {
 	instance pdfium.Pdfium
 	config   Config
+	pool     pdfium.Pool // non-nil when the Converter owns the pool
+}
+
+// New creates a new PDF to markdown converter with default configuration.
+// The returned Converter manages its own pdfium pool and must be closed
+// with Close when no longer needed.
+func New() (*Converter, error) {
+	return NewWithConfig(DefaultConfig())
+}
+
+// NewWithConfig creates a new PDF to markdown converter with custom configuration.
+// The returned Converter manages its own pdfium pool and must be closed
+// with Close when no longer needed.
+func NewWithConfig(config Config) (*Converter, error) {
+	pool, err := webassembly.Init(webassembly.Config{
+		MinIdle:  1,
+		MaxIdle:  1,
+		MaxTotal: 1,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to initialise pdfium")
+	}
+
+	instance, err := pool.GetInstance(time.Second * 30)
+	if err != nil {
+		pool.Close()
+		return nil, errors.Wrap(err, "failed to get pdfium instance")
+	}
+
+	return &Converter{
+		instance: instance,
+		config:   config,
+		pool:     pool,
+	}, nil
+}
+
+// Close releases resources held by the Converter. Only required for
+// converters created with New or NewWithConfig.
+func (c *Converter) Close() {
+	if c.pool != nil {
+		c.pool.Close()
+	}
 }
 
 // NewConverter creates a new PDF to markdown converter with default configuration.
+// The caller is responsible for managing the pdfium pool lifecycle.
 func NewConverter(instance pdfium.Pdfium) *Converter {
 	return &Converter{
 		instance: instance,
@@ -97,6 +140,7 @@ func NewConverter(instance pdfium.Pdfium) *Converter {
 }
 
 // NewConverterWithConfig creates a new PDF to markdown converter with custom configuration.
+// The caller is responsible for managing the pdfium pool lifecycle.
 func NewConverterWithConfig(instance pdfium.Pdfium, config Config) *Converter {
 	return &Converter{
 		instance: instance,
@@ -184,36 +228,10 @@ func (c *Converter) ConvertPageRange(filePath string, startPage, endPage int) (s
 		return "", errors.New("invalid page range: start page must be <= end page")
 	}
 
-	numPages := endPage - startPage + 1
-	rawPages := make([]*rawPageData, numPages)
-	for i := startPage; i <= endPage; i++ {
-		raw, err := c.extractRawPage(doc.Document, i)
-		if err != nil {
-			return "", errors.Wrapf(err, "failed to extract page %d", i+1)
-		}
-		rawPages[i-startPage] = raw
+	document, _, err := c.extractAndProcessPages(doc.Document, startPage, endPage)
+	if err != nil {
+		return "", err
 	}
-
-	maxConc := c.config.MaxConcurrency
-	if maxConc < 1 {
-		maxConc = 10
-	}
-
-	document := &Document{
-		Pages: make([]Page, numPages),
-	}
-	s := stream.New().WithMaxGoroutines(maxConc)
-	for i := 0; i < numPages; i++ {
-		idx := i
-		raw := rawPages[idx]
-		s.Go(func() stream.Callback {
-			page := buildPageStructure(raw, c.config)
-			return func() {
-				document.Pages[idx] = *page
-			}
-		})
-	}
-	s.Wait()
 
 	return document.ToMarkdown(c.config), nil
 }
@@ -229,60 +247,21 @@ func (c *Converter) convertDocument(docRef references.FPDF_DOCUMENT) (string, er
 		return "", errors.Wrap(err, "failed to get page count")
 	}
 
-	document := &Document{
-		Pages: make([]Page, pageCount.PageCount),
-	}
-	pageMetrics := make([]PageMetrics, pageCount.PageCount)
-
-	maxConc := c.config.MaxConcurrency
-	if maxConc < 1 {
-		maxConc = 10
+	document, pageMetrics, err := c.extractAndProcessPages(docRef, 0, pageCount.PageCount-1)
+	if err != nil {
+		return "", err
 	}
 
-	rawPages := make([]*rawPageData, pageCount.PageCount)
-	for i := 0; i < pageCount.PageCount; i++ {
-		raw, err := c.extractRawPage(docRef, i)
-		if err != nil {
-			return "", errors.Wrapf(err, "failed to extract page %d", i+1)
-		}
-		rawPages[i] = raw
-	}
-
-	var mu sync.Mutex
-	s := stream.New().WithMaxGoroutines(maxConc)
-	for i := 0; i < pageCount.PageCount; i++ {
-		idx := i
-		raw := rawPages[idx]
-		s.Go(func() stream.Callback {
-			pageStart := time.Now()
-			page := buildPageStructure(raw, c.config)
-			dur := time.Since(pageStart)
-
-			return func() {
-				document.Pages[idx] = *page
-				mu.Lock()
-				pageMetrics[idx] = PageMetrics{
-					PageNumber: idx + 1,
-					Duration:   dur,
-				}
-				mu.Unlock()
-
-				if c.config.EnableMetricsLogging {
-					log.Printf("Page %d/%d processed in %v", idx+1, pageCount.PageCount, dur)
-				}
-			}
-		})
-	}
-	s.Wait()
-
-	stats := calculateDocumentStatistics(document)
 	totalTime := time.Since(startTime)
 
 	if c.config.EnableMetricsLogging {
+		for _, pm := range pageMetrics {
+			log.Printf("Page %d/%d processed in %v", pm.PageNumber, pageCount.PageCount, pm.Duration)
+		}
 		logProcessingMetrics(ProcessingMetrics{
 			TotalTime:       totalTime,
 			PageExtractions: pageMetrics,
-			Statistics:      stats,
+			Statistics:      calculateDocumentStatistics(document),
 		})
 	}
 
@@ -312,7 +291,61 @@ func (c *Converter) extractPage(docRef references.FPDF_DOCUMENT, pageIndex int) 
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to extract page content")
 	}
-	return buildPageStructure(raw, c.config), nil
+	return buildPageStructure(raw, c.config, nil), nil
+}
+
+// extractAndProcessPages extracts pages [startPage, endPage] from the document
+// and concurrently builds their structure. It uses a two-phase approach:
+// Phase 1: Sequential extraction (pdfium is single-threaded)
+// Phase 2: Calculate document-wide stats as hints
+// Phase 3: Concurrent structure detection with stats
+func (c *Converter) extractAndProcessPages(docRef references.FPDF_DOCUMENT, startPage, endPage int) (*Document, []PageMetrics, error) {
+	numPages := endPage - startPage + 1
+
+	maxConc := c.config.MaxConcurrency
+	if maxConc < 1 {
+		maxConc = 10
+	}
+
+	// Phase 1: Sequential extraction (pdfium is single-threaded)
+	rawPages := make([]*rawPageData, numPages)
+	for i := startPage; i <= endPage; i++ {
+		raw, err := c.extractRawPage(docRef, i)
+		if err != nil {
+			return nil, nil, errors.Wrapf(err, "failed to extract page %d", i+1)
+		}
+		rawPages[i-startPage] = raw
+	}
+
+	// Phase 2: Calculate document-wide stats
+	stats := calculateDocumentStats(rawPages)
+
+	// Phase 3: Concurrent structure detection (with stats as hints)
+	document := &Document{
+		Pages: make([]Page, numPages),
+		Stats: stats,
+	}
+	pageMetrics := make([]PageMetrics, numPages)
+
+	s := stream.New().WithMaxGoroutines(maxConc)
+	for idx, raw := range rawPages {
+		s.Go(func() stream.Callback {
+			pageStart := time.Now()
+			page := buildPageStructure(raw, c.config, &stats)
+			dur := time.Since(pageStart)
+
+			return func() {
+				document.Pages[idx] = *page
+				pageMetrics[idx] = PageMetrics{
+					PageNumber: raw.pageNumber,
+					Duration:   dur,
+				}
+			}
+		})
+	}
+	s.Wait()
+
+	return document, pageMetrics, nil
 }
 
 // calculateDocumentStatistics calculates statistics for the document
@@ -381,7 +414,6 @@ func (c *Converter) ConvertFileWithMetrics(filePath string) (string, ProcessingM
 	startTime := time.Now()
 	openStart := time.Now()
 
-	// Open the PDF document
 	doc, err := c.instance.OpenDocument(&requests.OpenDocument{
 		FilePath: &filePath,
 	})
@@ -394,7 +426,6 @@ func (c *Converter) ConvertFileWithMetrics(filePath string) (string, ProcessingM
 
 	documentOpenTime := time.Since(openStart)
 
-	// Get page count
 	pageCount, err := c.instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{
 		Document: doc.Document,
 	})
@@ -402,58 +433,19 @@ func (c *Converter) ConvertFileWithMetrics(filePath string) (string, ProcessingM
 		return "", ProcessingMetrics{}, errors.Wrap(err, "failed to get page count")
 	}
 
-	document := &Document{
-		Pages: make([]Page, pageCount.PageCount),
-	}
-	pageMetrics := make([]PageMetrics, pageCount.PageCount)
-
-	maxConc := c.config.MaxConcurrency
-	if maxConc < 1 {
-		maxConc = 10
+	document, pageMetrics, err := c.extractAndProcessPages(doc.Document, 0, pageCount.PageCount-1)
+	if err != nil {
+		return "", ProcessingMetrics{}, err
 	}
 
-	rawPages := make([]*rawPageData, pageCount.PageCount)
-	for i := 0; i < pageCount.PageCount; i++ {
-		raw, err := c.extractRawPage(doc.Document, i)
-		if err != nil {
-			return "", ProcessingMetrics{}, errors.Wrapf(err, "failed to extract page %d", i+1)
-		}
-		rawPages[i] = raw
-	}
-
-	var mu sync.Mutex
-	s := stream.New().WithMaxGoroutines(maxConc)
-	for i := 0; i < pageCount.PageCount; i++ {
-		idx := i
-		raw := rawPages[idx]
-		s.Go(func() stream.Callback {
-			pageStart := time.Now()
-			page := buildPageStructure(raw, c.config)
-			dur := time.Since(pageStart)
-
-			return func() {
-				document.Pages[idx] = *page
-				mu.Lock()
-				pageMetrics[idx] = PageMetrics{
-					PageNumber: idx + 1,
-					Duration:   dur,
-				}
-				mu.Unlock()
-			}
-		})
-	}
-	s.Wait()
-
-	stats := calculateDocumentStatistics(document)
 	markdownOutput := document.ToMarkdown(c.config)
-
 	totalTime := time.Since(startTime)
 
 	metrics := ProcessingMetrics{
 		TotalTime:       totalTime,
 		DocumentOpen:    documentOpenTime,
 		PageExtractions: pageMetrics,
-		Statistics:      stats,
+		Statistics:      calculateDocumentStatistics(document),
 	}
 
 	return markdownOutput, metrics, nil

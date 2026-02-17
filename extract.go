@@ -1,4 +1,4 @@
-package pdfmarkdown
+package docmill
 
 import (
 	"math"
@@ -99,7 +99,8 @@ func extractRawPageData(instance pdfium.Pdfium, page references.FPDF_PAGE, pageN
 
 // buildPageStructure runs the CPU-bound structure detection pipeline on
 // pre-extracted raw page data. This is safe to call concurrently.
-func buildPageStructure(raw *rawPageData, config Config) *Page {
+// stats may be nil when processing a single page without document context.
+func buildPageStructure(raw *rawPageData, config Config, stats *DocumentStats) *Page {
 	if len(raw.words) == 0 {
 		return &Page{
 			Number:     raw.pageNumber,
@@ -113,9 +114,9 @@ func buildPageStructure(raw *rawPageData, config Config) *Page {
 
 	var paragraphs []Paragraph
 	if quality.IsLowQuality {
-		paragraphs = buildParagraphsNoDetection(raw.words, raw.pageWidth, config)
+		paragraphs = buildParagraphsNoDetection(raw.words, raw.pageWidth, config, stats)
 	} else {
-		paragraphs = buildParagraphs(raw.words, raw.pageWidth, config)
+		paragraphs = buildParagraphs(raw.words, raw.pageWidth, config, stats)
 	}
 
 	columns := detectColumns(raw.words, raw.pageWidth)
@@ -166,32 +167,75 @@ func ExtractPage(instance pdfium.Pdfium, page references.FPDF_PAGE, pageNumber i
 	if err != nil {
 		return nil, err
 	}
-	return buildPageStructure(raw, config), nil
+	return buildPageStructure(raw, config, nil), nil
 }
 
-// deduplicateTables removes duplicate tables based on bounding box overlap
+// deduplicateTables removes duplicate tables based on bounding box overlap.
+// Uses Union-Find to cluster overlapping tables and keeps the best candidate
+// from each cluster (most rows × columns). Inspired by Docling's overlap
+// resolution approach.
 func deduplicateTables(tables []Table) []Table {
 	if len(tables) <= 1 {
 		return tables
 	}
 
-	var unique []Table
-	for i, t1 := range tables {
-		isDuplicate := false
-		for j := i + 1; j < len(tables); j++ {
-			t2 := tables[j]
+	// Union-Find structure
+	parent := make([]int, len(tables))
+	rank := make([]int, len(tables))
+	for i := range parent {
+		parent[i] = i
+	}
 
-			// Check if tables have significant overlap (> 70%)
-			overlap := calculateTableOverlap(t1, t2)
-			if overlap > 0.7 {
-				isDuplicate = true
-				break
+	var find func(int) int
+	find = func(x int) int {
+		if parent[x] != x {
+			parent[x] = find(parent[x]) // path compression
+		}
+		return parent[x]
+	}
+
+	union := func(a, b int) {
+		ra, rb := find(a), find(b)
+		if ra == rb {
+			return
+		}
+		if rank[ra] < rank[rb] {
+			ra, rb = rb, ra
+		}
+		parent[rb] = ra
+		if rank[ra] == rank[rb] {
+			rank[ra]++
+		}
+	}
+
+	// Merge overlapping tables into clusters
+	for i := 0; i < len(tables); i++ {
+		for j := i + 1; j < len(tables); j++ {
+			if calculateTableOverlap(tables[i], tables[j]) > 0.7 {
+				union(i, j)
 			}
 		}
+	}
 
-		if !isDuplicate {
-			unique = append(unique, t1)
+	// Collect clusters and pick the best table from each
+	clusters := make(map[int][]int)
+	for i := range tables {
+		root := find(i)
+		clusters[root] = append(clusters[root], i)
+	}
+
+	unique := make([]Table, 0, len(clusters))
+	for _, members := range clusters {
+		bestIdx := members[0]
+		bestScore := tables[bestIdx].NumRows * tables[bestIdx].NumCols
+		for _, idx := range members[1:] {
+			score := tables[idx].NumRows * tables[idx].NumCols
+			if score > bestScore {
+				bestScore = score
+				bestIdx = idx
+			}
 		}
+		unique = append(unique, tables[bestIdx])
 	}
 
 	return unique

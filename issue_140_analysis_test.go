@@ -1,4 +1,4 @@
-package pdfmarkdown_test
+package docmill_test
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	pdfmarkdown "github.com/ivanvanderbyl/pdfmarkdown"
+	docmill "github.com/ivanvanderbyl/docmill"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/stretchr/testify/require"
@@ -45,11 +45,11 @@ func TestIssue140_Analysis(t *testing.T) {
 	})
 
 	// Extract with both detection methods enabled
-	config := pdfmarkdown.DefaultConfig()
+	config := docmill.DefaultConfig()
 	config.DetectTables = true
 	config.UseSegmentBasedTables = true
 
-	page, err := pdfmarkdown.ExtractPage(instance, pageResp.Page, 1, config)
+	page, err := docmill.ExtractPage(instance, pageResp.Page, 1, config)
 	require.NoError(t, err)
 
 	// Log detailed information
@@ -85,8 +85,8 @@ func TestIssue140_Analysis(t *testing.T) {
 	}
 
 	// Convert to markdown and inspect
-	mdDoc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{*page},
+	mdDoc := &docmill.Document{
+		Pages: []docmill.Page{*page},
 	}
 	markdown := mdDoc.ToMarkdown(config)
 

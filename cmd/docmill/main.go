@@ -6,18 +6,23 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"time"
 
-	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/urfave/cli/v3"
 
-	"github.com/ivanvanderbyl/pdfmarkdown"
+	"github.com/ivanvanderbyl/docmill"
+)
+
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
 )
 
 func main() {
 	cmd := &cli.Command{
-		Name:  "pdfmarkdown",
-		Usage: "Convert PDF files to markdown",
+		Name:    "docmill",
+		Usage:   "Convert PDF files to markdown",
+		Version: version,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "input",
@@ -115,22 +120,7 @@ func convertPDF(_ context.Context, cmd *cli.Command) error {
 	chunkOverlap := cmd.Int("chunk-overlap")
 	chunkRepeatHeadings := cmd.Bool("chunk-repeat-headings")
 
-	pool, err := webassembly.Init(webassembly.Config{
-		MinIdle:  1,
-		MaxIdle:  1,
-		MaxTotal: 1,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to initialise pdfium: %w", err)
-	}
-	defer pool.Close()
-
-	instance, err := pool.GetInstance(time.Second * 30)
-	if err != nil {
-		return fmt.Errorf("failed to get pdfium instance: %w", err)
-	}
-
-	config := pdfmarkdown.DefaultConfig()
+	config := docmill.DefaultConfig()
 	config.EnableMetricsLogging = cmd.Bool("metrics")
 	config.IncludePageBreaks = cmd.Bool("page-breaks")
 	config.MinHeadingFontSize = cmd.Float("min-heading-font-size")
@@ -138,7 +128,12 @@ func convertPDF(_ context.Context, cmd *cli.Command) error {
 	config.UseSegmentBasedTables = cmd.Bool("segment-tables")
 	config.UseAdaptiveThresholds = cmd.Bool("adaptive-thresholds")
 	config.MaxConcurrency = int(cmd.Int("max-concurrency"))
-	converter := pdfmarkdown.NewConverterWithConfig(instance, config)
+
+	converter, err := docmill.NewWithConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to initialise converter: %w", err)
+	}
+	defer converter.Close()
 
 	info, err := converter.GetDocumentInfo(inputPath)
 	if err != nil {
@@ -148,7 +143,7 @@ func convertPDF(_ context.Context, cmd *cli.Command) error {
 	fmt.Fprintf(os.Stderr, "Processing PDF with %d pages...\n", info.PageCount)
 
 	if chunkMode {
-		cc := pdfmarkdown.ChunkConfig{
+		cc := docmill.ChunkConfig{
 			MaxTokens:      int(chunkMaxTokens),
 			OverlapTokens:  int(chunkOverlap),
 			RepeatHeadings: chunkRepeatHeadings,

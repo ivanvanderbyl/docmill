@@ -10,12 +10,12 @@ import (
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/urfave/cli/v3"
 
-	"github.com/ivanvanderbyl/pdfmarkdown"
+	"github.com/ivanvanderbyl/docmill"
 )
 
 func main() {
 	cmd := &cli.Command{
-		Name:  "pdfmarkdown",
+		Name:  "docmill",
 		Usage: "Convert PDF files to markdown",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
@@ -78,9 +78,9 @@ func convertPDF(_ context.Context, cmd *cli.Command) error {
 	}
 
 	// Create converter with metrics enabled if requested
-	config := pdfmarkdown.DefaultConfig()
+	config := docmill.DefaultConfig()
 	config.EnableMetricsLogging = enableMetrics
-	converter := pdfmarkdown.NewConverterWithConfig(instance, config)
+	converter := docmill.NewConverterWithConfig(instance, config)
 
 	// Get document info
 	info, err := converter.GetDocumentInfo(inputPath)

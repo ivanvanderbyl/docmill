@@ -13,6 +13,12 @@ y r o t s i h l a v o r p p A
 s t n e m m o C s t n e m u c o d d e h c a t t A e p y t l a v o r p p A r o t c A n e k a t n o i t c A e m i t d n a e t a d n o i t c A  
 s t l u s e r o N
   
+| e t a d m i a C l |
+| ----------------- |
+| e p y t m i a C l |
+| D I m i a C l     |
+
+  
 | t n u o m A l l i B           | 1 6 0 . $                                 | 1 6 0 . $                                 | 1 6 0 . $                                 | 1 6 0 . $                             |
 | ----------------------------- | ----------------------------------------- | ----------------------------------------- | ----------------------------------------- | ------------------------------------- |
 | y t i t n a u Q m e t I       | 7 3 6                                     | 8 8 6                                     | 0 6 5                                     | 5 1 4                                 |
@@ -34,11 +40,5 @@ s t l u s e r o N
 | y b d e d a o l p U     |
 | e m a n t n e m u c o D |
 | e p y t t n e m u c o D |
-
-  
-| e t a d m i a C l |
-| ----------------- |
-| e p y t m i a C l |
-| D I m i a C l     |
 
   

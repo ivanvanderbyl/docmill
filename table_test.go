@@ -1,4 +1,4 @@
-package pdfmarkdown_test
+package docmill_test
 
 import (
 	"fmt"
@@ -6,45 +6,45 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	pdfmarkdown "github.com/ivanvanderbyl/pdfmarkdown"
+	docmill "github.com/ivanvanderbyl/docmill"
 )
 
 func TestTableDetection_SimpleGrid(t *testing.T) {
 	// Test with a simple manufactured table structure
-	page := &pdfmarkdown.Page{
+	page := &docmill.Page{
 		Number: 1,
 		Width:  612,
 		Height: 792,
-		Paragraphs: []pdfmarkdown.Paragraph{
+		Paragraphs: []docmill.Paragraph{
 			{
-				Lines: []pdfmarkdown.Line{
+				Lines: []docmill.Line{
 					{
-						Words: []pdfmarkdown.EnrichedWord{
-							{Text: "Name", Box: pdfmarkdown.Rect{X0: 100, Y0: 100, X1: 150, Y1: 115}},
-							{Text: "Age", Box: pdfmarkdown.Rect{X0: 200, Y0: 100, X1: 230, Y1: 115}},
-							{Text: "City", Box: pdfmarkdown.Rect{X0: 300, Y0: 100, X1: 340, Y1: 115}},
+						Words: []docmill.EnrichedWord{
+							{Text: "Name", Box: docmill.Rect{X0: 100, Y0: 100, X1: 150, Y1: 115}},
+							{Text: "Age", Box: docmill.Rect{X0: 200, Y0: 100, X1: 230, Y1: 115}},
+							{Text: "City", Box: docmill.Rect{X0: 300, Y0: 100, X1: 340, Y1: 115}},
 						},
 					},
 				},
 			},
 			{
-				Lines: []pdfmarkdown.Line{
+				Lines: []docmill.Line{
 					{
-						Words: []pdfmarkdown.EnrichedWord{
-							{Text: "John", Box: pdfmarkdown.Rect{X0: 100, Y0: 130, X1: 140, Y1: 145}},
-							{Text: "25", Box: pdfmarkdown.Rect{X0: 200, Y0: 130, X1: 220, Y1: 145}},
-							{Text: "NYC", Box: pdfmarkdown.Rect{X0: 300, Y0: 130, X1: 330, Y1: 145}},
+						Words: []docmill.EnrichedWord{
+							{Text: "John", Box: docmill.Rect{X0: 100, Y0: 130, X1: 140, Y1: 145}},
+							{Text: "25", Box: docmill.Rect{X0: 200, Y0: 130, X1: 220, Y1: 145}},
+							{Text: "NYC", Box: docmill.Rect{X0: 300, Y0: 130, X1: 330, Y1: 145}},
 						},
 					},
 				},
 			},
 			{
-				Lines: []pdfmarkdown.Line{
+				Lines: []docmill.Line{
 					{
-						Words: []pdfmarkdown.EnrichedWord{
-							{Text: "Jane", Box: pdfmarkdown.Rect{X0: 100, Y0: 160, X1: 140, Y1: 175}},
-							{Text: "30", Box: pdfmarkdown.Rect{X0: 200, Y0: 160, X1: 220, Y1: 175}},
-							{Text: "LA", Box: pdfmarkdown.Rect{X0: 300, Y0: 160, X1: 320, Y1: 175}},
+						Words: []docmill.EnrichedWord{
+							{Text: "Jane", Box: docmill.Rect{X0: 100, Y0: 160, X1: 140, Y1: 175}},
+							{Text: "30", Box: docmill.Rect{X0: 200, Y0: 160, X1: 220, Y1: 175}},
+							{Text: "LA", Box: docmill.Rect{X0: 300, Y0: 160, X1: 320, Y1: 175}},
 						},
 					},
 				},
@@ -52,8 +52,8 @@ func TestTableDetection_SimpleGrid(t *testing.T) {
 		},
 	}
 
-	settings := pdfmarkdown.DefaultTableSettings()
-	tables := pdfmarkdown.DetectTables(page, settings)
+	settings := docmill.DefaultTableSettings()
+	tables := docmill.DetectTables(page, settings)
 
 	require.Greater(t, len(tables), 0, "Expected to detect at least one table")
 

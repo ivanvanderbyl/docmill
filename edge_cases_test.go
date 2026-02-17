@@ -1,11 +1,11 @@
-package pdfmarkdown_test
+package docmill_test
 
 import (
 	"path/filepath"
 	"testing"
 	"time"
 
-	pdfmarkdown "github.com/ivanvanderbyl/pdfmarkdown"
+	docmill "github.com/ivanvanderbyl/docmill"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/stretchr/testify/require"
@@ -44,12 +44,12 @@ func TestEdgeCases_DuplicateChars(t *testing.T) {
 		Page: pageResp.Page,
 	})
 
-	config := pdfmarkdown.DefaultConfig()
-	page, err := pdfmarkdown.ExtractPage(instance, pageResp.Page, 1, config)
+	config := docmill.DefaultConfig()
+	page, err := docmill.ExtractPage(instance, pageResp.Page, 1, config)
 	require.NoError(t, err)
 
-	mdDoc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{*page},
+	mdDoc := &docmill.Document{
+		Pages: []docmill.Page{*page},
 	}
 	markdown := mdDoc.ToMarkdown(config)
 
@@ -94,12 +94,12 @@ func TestEdgeCases_Ligatures(t *testing.T) {
 		Page: pageResp.Page,
 	})
 
-	config := pdfmarkdown.DefaultConfig()
-	page, err := pdfmarkdown.ExtractPage(instance, pageResp.Page, 1, config)
+	config := docmill.DefaultConfig()
+	page, err := docmill.ExtractPage(instance, pageResp.Page, 1, config)
 	require.NoError(t, err)
 
-	mdDoc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{*page},
+	mdDoc := &docmill.Document{
+		Pages: []docmill.Page{*page},
 	}
 	markdown := mdDoc.ToMarkdown(config)
 
@@ -141,12 +141,12 @@ func TestEdgeCases_RotationAngles(t *testing.T) {
 		Page: pageResp.Page,
 	})
 
-	config := pdfmarkdown.DefaultConfig()
-	page, err := pdfmarkdown.ExtractPage(instance, pageResp.Page, 1, config)
+	config := docmill.DefaultConfig()
+	page, err := docmill.ExtractPage(instance, pageResp.Page, 1, config)
 	require.NoError(t, err)
 
-	mdDoc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{*page},
+	mdDoc := &docmill.Document{
+		Pages: []docmill.Page{*page},
 	}
 	markdown := mdDoc.ToMarkdown(config)
 
@@ -189,13 +189,13 @@ func TestEdgeCases_VerticalText(t *testing.T) {
 		Page: pageResp.Page,
 	})
 
-	config := pdfmarkdown.DefaultConfig()
+	config := docmill.DefaultConfig()
 	config.DetectTables = true
-	page, err := pdfmarkdown.ExtractPage(instance, pageResp.Page, 1, config)
+	page, err := docmill.ExtractPage(instance, pageResp.Page, 1, config)
 	require.NoError(t, err)
 
-	mdDoc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{*page},
+	mdDoc := &docmill.Document{
+		Pages: []docmill.Page{*page},
 	}
 	markdown := mdDoc.ToMarkdown(config)
 
@@ -244,12 +244,12 @@ func TestEdgeCases_NonZeroMediaBox(t *testing.T) {
 		Page: pageResp.Page,
 	})
 
-	config := pdfmarkdown.DefaultConfig()
-	page, err := pdfmarkdown.ExtractPage(instance, pageResp.Page, 1, config)
+	config := docmill.DefaultConfig()
+	page, err := docmill.ExtractPage(instance, pageResp.Page, 1, config)
 	require.NoError(t, err)
 
-	mdDoc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{*page},
+	mdDoc := &docmill.Document{
+		Pages: []docmill.Page{*page},
 	}
 	markdown := mdDoc.ToMarkdown(config)
 
@@ -299,8 +299,8 @@ func TestEdgeCases_MalformedPDF(t *testing.T) {
 		Page: pageResp.Page,
 	})
 
-	config := pdfmarkdown.DefaultConfig()
-	_, err = pdfmarkdown.ExtractPage(instance, pageResp.Page, 1, config)
+	config := docmill.DefaultConfig()
+	_, err = docmill.ExtractPage(instance, pageResp.Page, 1, config)
 	// May fail, but should not crash
 	if err != nil {
 		t.Logf("Malformed PDF extraction failed (acceptable): %v", err)
@@ -365,10 +365,10 @@ func TestEdgeCases_TableWithCurves(t *testing.T) {
 		Page: pageResp.Page,
 	})
 
-	config := pdfmarkdown.DefaultConfig()
+	config := docmill.DefaultConfig()
 	config.DetectTables = true
 
-	page, err := pdfmarkdown.ExtractPage(instance, pageResp.Page, 1, config)
+	page, err := docmill.ExtractPage(instance, pageResp.Page, 1, config)
 	require.NoError(t, err)
 
 	// Note: Curved borders may not be detected as straight lines
@@ -410,12 +410,12 @@ func TestEdgeCases_UnicodeIssues(t *testing.T) {
 		Page: pageResp.Page,
 	})
 
-	config := pdfmarkdown.DefaultConfig()
-	page, err := pdfmarkdown.ExtractPage(instance, pageResp.Page, 1, config)
+	config := docmill.DefaultConfig()
+	page, err := docmill.ExtractPage(instance, pageResp.Page, 1, config)
 	require.NoError(t, err)
 
-	mdDoc := &pdfmarkdown.Document{
-		Pages: []pdfmarkdown.Page{*page},
+	mdDoc := &docmill.Document{
+		Pages: []docmill.Page{*page},
 	}
 	markdown := mdDoc.ToMarkdown(config)
 

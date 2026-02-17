@@ -1,4 +1,4 @@
-# pdfmarkdown
+# docmill
 
 Fast PDF to Markdown conversion using pdfium text extraction with intelligent layout and style analysis.
 
@@ -31,7 +31,7 @@ The converter works in three stages:
 ## Installation
 
 ```bash
-go get github.com/ivanvanderbyl/pdfmarkdown
+go get github.com/ivanvanderbyl/docmill
 ```
 
 ## Usage
@@ -42,32 +42,16 @@ go get github.com/ivanvanderbyl/pdfmarkdown
 import (
     "fmt"
     "log"
-    "time"
 
-    "github.com/klippa-app/go-pdfium/webassembly"
-    "github.com/ivanvanderbyl/pdfmarkdown"
+    "github.com/ivanvanderbyl/docmill"
 )
 
-// Initialise pdfium
-pool, err := webassembly.Init(webassembly.Config{
-    MinIdle:  1,
-    MaxIdle:  1,
-    MaxTotal: 1,
-})
+converter, err := docmill.New()
 if err != nil {
     log.Fatal(err)
 }
-defer pool.Close()
+defer converter.Close()
 
-instance, err := pool.GetInstance(time.Second * 30)
-if err != nil {
-    log.Fatal(err)
-}
-
-// Create converter with default settings
-converter := pdfmarkdown.NewConverter(instance)
-
-// Convert file
 markdown, err := converter.ConvertFile("document.pdf")
 if err != nil {
     log.Fatal(err)
@@ -79,8 +63,7 @@ fmt.Println(markdown)
 ### Custom Configuration
 
 ```go
-// Create custom configuration
-config := pdfmarkdown.DefaultConfig()
+config := docmill.DefaultConfig()
 config.IncludePageBreaks = true
 config.DetectTables = true
 config.UseSegmentBasedTables = true  // Better for PDFs without ruling lines
@@ -88,8 +71,11 @@ config.UseAdaptiveThresholds = true
 config.MinHeadingFontSize = 1.2      // Adjust heading detection sensitivity
 config.EnableMetricsLogging = true   // Enable performance metrics
 
-// Create converter with custom config
-converter := pdfmarkdown.NewConverterWithConfig(instance, config)
+converter, err := docmill.NewWithConfig(config)
+if err != nil {
+    log.Fatal(err)
+}
+defer converter.Close()
 
 markdown, err := converter.ConvertFile("document.pdf")
 ```
@@ -141,28 +127,50 @@ A CLI tool is provided for quick conversions:
 
 ### Installation
 
-Build from source:
+#### Download pre-built binary
+
+Pre-built binaries are available for Linux, macOS, and Windows (amd64 and arm64) from [GitHub Releases](https://github.com/ivanvanderbyl/docmill/releases/latest).
+
+**macOS / Linux:**
 
 ```bash
-git clone https://github.com/ivanvanderbyl/pdfmarkdown.git
-cd pdfmarkdown
-go install ./cmd/pdfmarkdown
+# Download the latest release (adjust OS and ARCH as needed)
+# OS: linux, darwin  ARCH: amd64, arm64
+curl -sL "https://github.com/ivanvanderbyl/docmill/releases/latest/download/docmill_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/').tar.gz" -o /tmp/docmill.tar.gz && tar xzf /tmp/docmill.tar.gz -C /usr/local/bin docmill && rm /tmp/docmill.tar.gz
+```
+
+**Windows:**
+
+Download the appropriate `.zip` from the [releases page](https://github.com/ivanvanderbyl/docmill/releases/latest) and add `docmill.exe` to your `PATH`.
+
+#### Install with `go install`
+
+```bash
+go install github.com/ivanvanderbyl/docmill/cmd/docmill@latest
+```
+
+#### Build from source
+
+```bash
+git clone https://github.com/ivanvanderbyl/docmill.git
+cd docmill
+go install ./cmd/docmill
 ```
 
 ### Usage
 
 ```bash
 # Convert to file
-pdfmarkdown -i input.pdf -o output.md
+docmill -i input.pdf -o output.md
 
 # Convert specific pages (0-indexed)
-pdfmarkdown -i input.pdf -o output.md --start-page 0 --end-page 4
+docmill -i input.pdf -o output.md --start-page 0 --end-page 4
 
 # Output to stdout
-pdfmarkdown -i input.pdf
+docmill -i input.pdf
 
 # Enable metrics logging
-pdfmarkdown -i input.pdf -o output.md --metrics
+docmill -i input.pdf -o output.md --metrics
 ```
 
 ### Options
@@ -220,8 +228,8 @@ type Config struct {
 Table detection can be configured using `TableSettings`:
 
 ```go
-config := pdfmarkdown.DefaultConfig()
-config.TableSettings = pdfmarkdown.TableSettings{
+config := docmill.DefaultConfig()
+config.TableSettings = docmill.TableSettings{
     VerticalStrategy:   "lines",  // "text", "lines", "lines_strict", "explicit"
     HorizontalStrategy: "lines",
     SnapTolerance:      3.0,      // Tolerance for snapping close edges
@@ -337,7 +345,7 @@ Compare to LLM-based extraction:
 
 ## Use Cases
 
-**Ideal for pdfmarkdown:**
+**Ideal for docmill:**
 - PDFs with extractable text (not scanned images)
 - Fast conversion without LLM API costs
 - Document structure is relatively standard
