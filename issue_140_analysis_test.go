@@ -79,7 +79,7 @@ func TestIssue140_Analysis(t *testing.T) {
 
 		// Write table to JSON for inspection
 		tableJSON, _ := json.MarshalIndent(table, "", "  ")
-		outputPath := filepath.Join("testdata", "issue-140-table-analysis.json")
+		outputPath := filepath.Join(t.TempDir(), "issue-140-table-analysis.json")
 		_ = os.WriteFile(outputPath, tableJSON, 0644)
 		t.Logf("Table JSON written to: %s", outputPath)
 	}
@@ -90,7 +90,7 @@ func TestIssue140_Analysis(t *testing.T) {
 	}
 	markdown := mdDoc.ToMarkdown(config)
 
-	outputPath := filepath.Join("testdata", "issue-140-output.md")
+	outputPath := filepath.Join(t.TempDir(), "issue-140-output.md")
 	err = os.WriteFile(outputPath, []byte(markdown), 0644)
 	require.NoError(t, err)
 	t.Logf("Markdown output written to: %s", outputPath)
