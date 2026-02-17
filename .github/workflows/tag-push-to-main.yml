@@ -54,46 +54,4 @@ jobs:
           git push origin "${tag_name}"
           echo "created=true" >> "$GITHUB_OUTPUT"
 
-      - name: Generate changelog
-        if: steps.tag.outputs.created == 'true'
-        id: changelog
-        env:
-          TAG_NAME: ${{ steps.tag.outputs.tag_name }}
-        run: |
-          prev_tag=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -2 | tail -1)
-
-          if [ -n "$prev_tag" ] && [ "$prev_tag" != "$TAG_NAME" ]; then
-            changelog=$(git log ${prev_tag}..${TAG_NAME} --pretty=format:"- %s (%h)" --no-merges)
-          else
-            changelog=$(git log ${TAG_NAME} --pretty=format:"- %s (%h)" --no-merges)
-          fi
-
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          echo "$changelog" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Create GitHub release
-        if: steps.tag.outputs.created == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG_NAME: ${{ steps.tag.outputs.tag_name }}
-          CHANGELOG: ${{ steps.changelog.outputs.changelog }}
-        run: |
-          cat << EOF > /tmp/release-notes.md
-          ## What's Changed
-
-          $CHANGELOG
-
-          ## Installation
-
-          \`\`\`bash
-          go get github.com/ivanvanderbyl/pdfmarkdown@${TAG_NAME}
-          \`\`\`
-
-          **Full Changelog**: https://github.com/${{ github.repository }}/commits/${TAG_NAME}
-          EOF
-
-          gh release create "${TAG_NAME}" \
-            --title "${TAG_NAME}" \
-            --notes-file /tmp/release-notes.md \
-            --repo ${{ github.repository }}
+      # Release with binaries is handled by release.yml triggered by the tag push

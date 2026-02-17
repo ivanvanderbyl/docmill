@@ -127,7 +127,29 @@ A CLI tool is provided for quick conversions:
 
 ### Installation
 
-Build from source:
+#### Download pre-built binary
+
+Pre-built binaries are available for Linux, macOS, and Windows (amd64 and arm64) from [GitHub Releases](https://github.com/ivanvanderbyl/pdfmarkdown/releases/latest).
+
+**macOS / Linux:**
+
+```bash
+# Download the latest release (adjust OS and ARCH as needed)
+# OS: linux, darwin  ARCH: amd64, arm64
+curl -sL "https://github.com/ivanvanderbyl/pdfmarkdown/releases/latest/download/pdfmarkdown_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/').tar.gz" | tar xz -C /usr/local/bin pdfmarkdown
+```
+
+**Windows:**
+
+Download the appropriate `.zip` from the [releases page](https://github.com/ivanvanderbyl/pdfmarkdown/releases/latest) and add `pdfmarkdown.exe` to your `PATH`.
+
+#### Install with `go install`
+
+```bash
+go install github.com/ivanvanderbyl/pdfmarkdown/cmd/pdfmarkdown@latest
+```
+
+#### Build from source
 
 ```bash
 git clone https://github.com/ivanvanderbyl/pdfmarkdown.git

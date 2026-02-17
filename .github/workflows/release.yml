@@ -7,10 +7,11 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
-    name: Verify Release
+    name: Release
     runs-on: ubuntu-latest
 
     steps:
@@ -27,5 +28,11 @@ jobs:
       - name: Run tests
         run: go test -v ./...
 
-      - name: Build
-        run: go build -v ./...
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
