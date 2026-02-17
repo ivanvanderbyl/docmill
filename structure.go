@@ -3,10 +3,12 @@ package docmill
 import (
 	"math"
 	"sort"
+	"unicode"
 )
 
 // buildParagraphs groups words into lines and paragraphs with rotation and column awareness.
-func buildParagraphs(words []EnrichedWord, pageWidth float64, config Config) []Paragraph {
+// stats may be nil when document-wide statistics are not available.
+func buildParagraphs(words []EnrichedWord, pageWidth float64, config Config, stats *DocumentStats) []Paragraph {
 	if len(words) == 0 {
 		return nil
 	}
@@ -69,7 +71,7 @@ func buildParagraphs(words []EnrichedWord, pageWidth float64, config Config) []P
 	}
 
 	// Group lines into paragraphs with adaptive spacing
-	paragraphs := groupLinesIntoParagraphsAdaptive(allLines, pageWidth)
+	paragraphs := groupLinesIntoParagraphsAdaptive(allLines, pageWidth, stats)
 
 	// Detect columns for reading order
 	columns := detectColumns(words, pageWidth)
@@ -78,7 +80,7 @@ func buildParagraphs(words []EnrichedWord, pageWidth float64, config Config) []P
 	paragraphs = determineReadingOrder(paragraphs, columns)
 
 	// Detect heading levels
-	detectHeadings(paragraphs, config)
+	detectHeadings(paragraphs, config, stats)
 
 	// Detect lists
 	detectLists(paragraphs)
@@ -89,7 +91,8 @@ func buildParagraphs(words []EnrichedWord, pageWidth float64, config Config) []P
 	return paragraphs
 }
 
-func buildParagraphsNoDetection(words []EnrichedWord, pageWidth float64, config Config) []Paragraph {
+// stats may be nil when document-wide statistics are not available.
+func buildParagraphsNoDetection(words []EnrichedWord, pageWidth float64, config Config, stats *DocumentStats) []Paragraph {
 	if len(words) == 0 {
 		return nil
 	}
@@ -137,7 +140,7 @@ func buildParagraphsNoDetection(words []EnrichedWord, pageWidth float64, config 
 		allLines = append(allLines, block.Lines...)
 	}
 
-	paragraphs := groupLinesIntoParagraphsAdaptive(allLines, pageWidth)
+	paragraphs := groupLinesIntoParagraphsAdaptive(allLines, pageWidth, stats)
 
 	columns := detectColumns(words, pageWidth)
 	paragraphs = determineReadingOrder(paragraphs, columns)
@@ -287,19 +290,28 @@ func groupWordsIntoLinesBaseline(words []EnrichedWord) []Line {
 	return lines
 }
 
-// groupLinesIntoParagraphsAdaptive groups lines into paragraphs using adaptive spacing
-func groupLinesIntoParagraphsAdaptive(lines []Line, pageWidth float64) []Paragraph {
+// groupLinesIntoParagraphsAdaptive groups lines into paragraphs using adaptive spacing.
+// stats may be nil when document-wide statistics are not available.
+func groupLinesIntoParagraphsAdaptive(lines []Line, pageWidth float64, stats *DocumentStats) []Paragraph {
 	if len(lines) == 0 {
 		return nil
 	}
 
 	// Calculate dynamic threshold based on line spacing distribution
-	threshold := calculateDynamicThreshold(lines)
+	threshold := calculateDynamicThreshold(lines, stats)
 
 	var paragraphs []Paragraph
 	var currentPara []Line
 	var paraBox Rect
 	var prevLineBottom float64
+
+	// Find the minimum X position (left margin) for indentation detection
+	var minX float64
+	for i, line := range lines {
+		if i == 0 || line.Box.X0 < minX {
+			minX = line.Box.X0
+		}
+	}
 
 	for i, line := range lines {
 		if len(currentPara) == 0 {
@@ -317,10 +329,19 @@ func groupLinesIntoParagraphsAdaptive(lines []Line, pageWidth float64) []Paragra
 			fontSizeRatio := currentLineFontSize / avgFontSize
 			significantFontChange := fontSizeRatio < 0.8 || fontSizeRatio > 1.2
 
-			// Use adaptive threshold
+			// Use adaptive threshold, with extra tolerance for indented items
+			// (lists, code blocks, nested content). Inspired by pdf2md's
+			// bigDistance() which allows mostUsedDistance * 1.5 for indented lines.
+			effectiveThreshold := threshold
+			lastLine := currentPara[len(currentPara)-1]
+			bothIndented := lastLine.Box.X0 > minX+5 && line.Box.X0 > minX+5
+			if bothIndented {
+				effectiveThreshold = threshold * 1.5
+			}
+
 			normalizedGap := lineGap / avgFontSize
 
-			if normalizedGap > threshold || significantFontChange {
+			if normalizedGap > effectiveThreshold || significantFontChange {
 				// End current paragraph, start new one
 				paragraphs = append(paragraphs, Paragraph{
 					Lines:     currentPara,
@@ -354,8 +375,9 @@ func groupLinesIntoParagraphsAdaptive(lines []Line, pageWidth float64) []Paragra
 	return paragraphs
 }
 
-// calculateDynamicThreshold calculates adaptive paragraph spacing threshold
-func calculateDynamicThreshold(lines []Line) float64 {
+// calculateDynamicThreshold calculates adaptive paragraph spacing threshold.
+// stats may be nil when document-wide statistics are not available.
+func calculateDynamicThreshold(lines []Line, stats *DocumentStats) float64 {
 	if len(lines) < 3 {
 		return 0.9 // Fallback to default
 	}
@@ -385,6 +407,18 @@ func calculateDynamicThreshold(lines []Line) float64 {
 	}
 
 	threshold := (medianGap + 1.5*stdDev) / medianFontSize
+
+	// Use document-wide MostUsedLineGap as a hint when available.
+	// If the per-page median gap is within 30% of the document-wide value,
+	// blend them (70% page-local, 30% document-wide) for stability.
+	if stats != nil && stats.MostUsedLineGap > 0 && medianGap > 0 {
+		ratio := medianGap / stats.MostUsedLineGap
+		if ratio >= 0.7 && ratio <= 1.3 {
+			blendedGap := medianGap*0.7 + stats.MostUsedLineGap*0.3
+			blendedThreshold := (blendedGap + 1.5*stdDev) / medianFontSize
+			threshold = blendedThreshold
+		}
+	}
 
 	// Clamp to reasonable bounds (0.6x to 1.5x font size)
 	return clamp(threshold, 0.6, 1.5)
@@ -584,7 +618,7 @@ func kMeansClusters1D(values []float64, k int, maxIter int, convergence float64)
 	return centroids
 }
 
-func detectHeadings(paragraphs []Paragraph, config Config) {
+func detectHeadings(paragraphs []Paragraph, config Config, stats *DocumentStats) {
 	if len(paragraphs) == 0 || config.MinHeadingFontSize == 0 {
 		return
 	}
@@ -602,7 +636,39 @@ func detectHeadings(paragraphs []Paragraph, config Config) {
 	}
 
 	sort.Float64s(allFontSizes)
-	bodyFontSize := allFontSizes[len(allFontSizes)/2]
+	pageMedianFontSize := allFontSizes[len(allFontSizes)/2]
+
+	// Use document-wide MostUsedFontSize as a hint when available.
+	// If the per-page median is within 20% of the document-wide value,
+	// prefer the document-wide value for consistency across pages.
+	// Otherwise fall back to per-page median (the page may have unusual content).
+	bodyFontSize := pageMedianFontSize
+	if stats != nil && stats.MostUsedFontSize > 0 {
+		ratio := pageMedianFontSize / stats.MostUsedFontSize
+		if ratio >= 0.8 && ratio <= 1.2 {
+			bodyFontSize = stats.MostUsedFontSize
+		}
+	}
+
+	// Find most common font name (body text font)
+	fontNameCounts := make(map[string]int)
+	for _, para := range paragraphs {
+		for _, line := range para.Lines {
+			for _, word := range line.Words {
+				if word.FontName != "" {
+					fontNameCounts[word.FontName]++
+				}
+			}
+		}
+	}
+	var bodyFontName string
+	var maxFontNameCount int
+	for name, count := range fontNameCounts {
+		if count > maxFontNameCount {
+			maxFontNameCount = count
+			bodyFontName = name
+		}
+	}
 
 	var samples []float64
 	for _, para := range paragraphs {
@@ -739,6 +805,46 @@ func detectHeadings(paragraphs []Paragraph, config Config) {
 			if isBold && maxFontSize >= bodyFontSize*1.05 && maxFontSize >= bodyFontSize*config.MinHeadingFontSize {
 				para.IsHeading = true
 				para.HeadingLevel = 6
+			}
+		}
+
+		// Fallback: Uppercase text with different font (pdf2md strategy 4)
+		// Some documents use ALL CAPS with a different font family as headings
+		if !para.IsHeading && len(line.Words) > 0 {
+			// Check if the paragraph is short (typical heading length)
+			totalWords := 0
+			for _, l := range para.Lines {
+				totalWords += len(l.Words)
+			}
+
+			if totalWords <= 12 { // Headings are typically short
+				allUpper := true
+				differentFont := false
+				hasLetters := false
+
+				for _, word := range line.Words {
+					for _, r := range word.Text {
+						if unicode.IsLetter(r) {
+							hasLetters = true
+							if !unicode.IsUpper(r) {
+								allUpper = false
+								break
+							}
+						}
+					}
+					if !allUpper {
+						break
+					}
+					// Check if font differs from body text
+					if word.FontName != "" && bodyFontName != "" && word.FontName != bodyFontName {
+						differentFont = true
+					}
+				}
+
+				if allUpper && hasLetters && differentFont && maxFontSize >= bodyFontSize*0.95 {
+					para.IsHeading = true
+					para.HeadingLevel = 6 // Lowest level, will be renormalized
+				}
 			}
 		}
 	}

@@ -368,9 +368,9 @@ func TestCalculateStdDev(t *testing.T) {
 // TestRotatePoint tests point rotation
 func TestRotatePoint(t *testing.T) {
 	tests := []struct {
-		name     string
-		x, y     float64
-		angle    float64
+		name      string
+		x, y      float64
+		angle     float64
 		expectedX float64
 		expectedY float64
 	}{
@@ -465,11 +465,11 @@ func TestCalculateDynamicThreshold(t *testing.T) {
 	// Create lines with consistent spacing
 	lines := []Line{
 		{Box: Rect{Y0: 0, Y1: 10}},
-		{Box: Rect{Y0: 12, Y1: 22}},   // gap: 2
-		{Box: Rect{Y0: 24, Y1: 34}},   // gap: 2
-		{Box: Rect{Y0: 36, Y1: 46}},   // gap: 2
-		{Box: Rect{Y0: 60, Y1: 70}},   // gap: 14 (paragraph break)
-		{Box: Rect{Y0: 72, Y1: 82}},   // gap: 2
+		{Box: Rect{Y0: 12, Y1: 22}}, // gap: 2
+		{Box: Rect{Y0: 24, Y1: 34}}, // gap: 2
+		{Box: Rect{Y0: 36, Y1: 46}}, // gap: 2
+		{Box: Rect{Y0: 60, Y1: 70}}, // gap: 14 (paragraph break)
+		{Box: Rect{Y0: 72, Y1: 82}}, // gap: 2
 	}
 
 	// Set font sizes for all lines
@@ -479,7 +479,7 @@ func TestCalculateDynamicThreshold(t *testing.T) {
 		}
 	}
 
-	threshold := calculateDynamicThreshold(lines)
+	threshold := calculateDynamicThreshold(lines, nil)
 
 	// Threshold should be between 0.6 and 1.5 (clamped)
 	if threshold < 0.6 || threshold > 1.5 {

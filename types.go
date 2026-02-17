@@ -165,9 +165,21 @@ type Page struct {
 	Columns    []Column // Detected column layout
 }
 
+// DocumentStats holds document-wide font and spacing statistics.
+// These are calculated across all pages as hints for structure detection.
+type DocumentStats struct {
+	MostUsedFontSize float64         // Most common font size (body text)
+	MostUsedFontName string          // Most common font name
+	MostUsedLineGap  float64         // Most common line spacing
+	FontSizeFreq     map[float64]int // Frequency map of font sizes
+	FontNameFreq     map[string]int  // Frequency map of font names
+	MaxFontSize      float64         // Largest font size in document
+}
+
 // Document represents the complete extracted document structure.
 type Document struct {
 	Pages []Page
+	Stats DocumentStats
 }
 
 // PageExtractor provides context for extracting text from a page.

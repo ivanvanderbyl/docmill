@@ -255,9 +255,8 @@ func (c *Converter) convertDocument(docRef references.FPDF_DOCUMENT) (string, er
 	totalTime := time.Since(startTime)
 
 	if c.config.EnableMetricsLogging {
-		for i, pm := range pageMetrics {
+		for _, pm := range pageMetrics {
 			log.Printf("Page %d/%d processed in %v", pm.PageNumber, pageCount.PageCount, pm.Duration)
-			_ = i
 		}
 		logProcessingMetrics(ProcessingMetrics{
 			TotalTime:       totalTime,
@@ -292,13 +291,14 @@ func (c *Converter) extractPage(docRef references.FPDF_DOCUMENT, pageIndex int) 
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to extract page content")
 	}
-	return buildPageStructure(raw, c.config), nil
+	return buildPageStructure(raw, c.config, nil), nil
 }
 
 // extractAndProcessPages extracts pages [startPage, endPage] from the document
-// and concurrently builds their structure. It uses a pipeline approach: each
-// page is submitted for concurrent processing as soon as it is extracted,
-// rather than buffering all raw pages in memory first.
+// and concurrently builds their structure. It uses a two-phase approach:
+// Phase 1: Sequential extraction (pdfium is single-threaded)
+// Phase 2: Calculate document-wide stats as hints
+// Phase 3: Concurrent structure detection with stats
 func (c *Converter) extractAndProcessPages(docRef references.FPDF_DOCUMENT, startPage, endPage int) (*Document, []PageMetrics, error) {
 	numPages := endPage - startPage + 1
 
@@ -307,29 +307,37 @@ func (c *Converter) extractAndProcessPages(docRef references.FPDF_DOCUMENT, star
 		maxConc = 10
 	}
 
+	// Phase 1: Sequential extraction (pdfium is single-threaded)
+	rawPages := make([]*rawPageData, numPages)
+	for i := startPage; i <= endPage; i++ {
+		raw, err := c.extractRawPage(docRef, i)
+		if err != nil {
+			return nil, nil, errors.Wrapf(err, "failed to extract page %d", i+1)
+		}
+		rawPages[i-startPage] = raw
+	}
+
+	// Phase 2: Calculate document-wide stats
+	stats := calculateDocumentStats(rawPages)
+
+	// Phase 3: Concurrent structure detection (with stats as hints)
 	document := &Document{
 		Pages: make([]Page, numPages),
+		Stats: stats,
 	}
 	pageMetrics := make([]PageMetrics, numPages)
 
 	s := stream.New().WithMaxGoroutines(maxConc)
-	for i := startPage; i <= endPage; i++ {
-		raw, err := c.extractRawPage(docRef, i)
-		if err != nil {
-			s.Wait()
-			return nil, nil, errors.Wrapf(err, "failed to extract page %d", i+1)
-		}
-
-		idx := i - startPage
+	for idx, raw := range rawPages {
 		s.Go(func() stream.Callback {
 			pageStart := time.Now()
-			page := buildPageStructure(raw, c.config)
+			page := buildPageStructure(raw, c.config, &stats)
 			dur := time.Since(pageStart)
 
 			return func() {
 				document.Pages[idx] = *page
 				pageMetrics[idx] = PageMetrics{
-					PageNumber: i + 1,
+					PageNumber: raw.pageNumber,
 					Duration:   dur,
 				}
 			}

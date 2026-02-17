@@ -136,7 +136,7 @@ Pre-built binaries are available for Linux, macOS, and Windows (amd64 and arm64)
 ```bash
 # Download the latest release (adjust OS and ARCH as needed)
 # OS: linux, darwin  ARCH: amd64, arm64
-curl -sL "https://github.com/ivanvanderbyl/docmill/releases/latest/download/docmill_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/').tar.gz" | tar xz -C /usr/local/bin docmill
+curl -sL "https://github.com/ivanvanderbyl/docmill/releases/latest/download/docmill_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/').tar.gz" -o /tmp/docmill.tar.gz && tar xzf /tmp/docmill.tar.gz -C /usr/local/bin docmill && rm /tmp/docmill.tar.gz
 ```
 
 **Windows:**
