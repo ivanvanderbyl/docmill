@@ -9,7 +9,7 @@
 // span lifetime concern (crbug.com/1361849) is automatic under Go's GC.
 package objects
 
-import "github.com/ivanvanderbyl/docmill/pkg/parser/internal/crt"
+import "github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
 
 type Stream struct {
 	baseObject

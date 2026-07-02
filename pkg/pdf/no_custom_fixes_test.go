@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/page"
-	"github.com/ivanvanderbyl/docmill/pkg/pdf"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/pdf"
 	"github.com/stretchr/testify/require"
 )
 

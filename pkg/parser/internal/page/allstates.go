@@ -8,7 +8,7 @@
 // register file that the operator table reads and writes.
 package page
 
-import "github.com/ivanvanderbyl/docmill/pkg/parser/internal/crt"
+import "github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
 
 // GraphState is the stroking state (line width/cap/join/miter/dash). Only
 // lineWidth is consumed (stroke-mode rect inflate); the rest is stored so the

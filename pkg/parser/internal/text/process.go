@@ -6,9 +6,9 @@ package text
 import (
 	"unicode"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/crt"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/font"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/font"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/page"
 )
 
 // isPrint ports the C isprint() used in the ActualText printability scans: a

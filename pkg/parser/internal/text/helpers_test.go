@@ -7,8 +7,8 @@ package text
 import (
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/crt"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/page"
 )
 
 func box(l, b, r, t float32) crt.FloatRect { return crt.NewFloatRect(l, b, r, t) }

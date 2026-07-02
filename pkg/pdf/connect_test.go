@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/geom"
-	"github.com/ivanvanderbyl/docmill/pkg/page"
-	"github.com/ivanvanderbyl/docmill/pkg/pdf"
-	doctable "github.com/ivanvanderbyl/docmill/pkg/table"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/pdf"
+	doctable "github.com/ivanvanderbyl/docmill/v2/pkg/table"
 	"github.com/stretchr/testify/require"
 )
 

@@ -1,6 +1,6 @@
 package page
 
-import "github.com/ivanvanderbyl/docmill/pkg/parser/internal/crt"
+import "github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
 
 type PathSegment struct {
 	From crt.PointF

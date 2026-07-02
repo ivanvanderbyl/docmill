@@ -4,7 +4,7 @@ package font
 import (
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 )
 
 func mapFromString(s string) *toUnicodeMap {

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser"
-	docpdf "github.com/ivanvanderbyl/docmill/pkg/pdf"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser"
+	docpdf "github.com/ivanvanderbyl/docmill/v2/pkg/pdf"
 )
 
 // TestNativeMarkdownSimilarityToGolden is a tier-5-style quality gate for the

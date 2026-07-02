@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/ivanvanderbyl/docmill/pkg/geom"
-	docpage "github.com/ivanvanderbyl/docmill/pkg/page"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/crt"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/document"
-	pdfpage "github.com/ivanvanderbyl/docmill/pkg/parser/internal/page"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/parser"
-	pdftext "github.com/ivanvanderbyl/docmill/pkg/parser/internal/text"
-	docpdf "github.com/ivanvanderbyl/docmill/pkg/pdf"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
+	docpage "github.com/ivanvanderbyl/docmill/v2/pkg/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/document"
+	pdfpage "github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/parser"
+	pdftext "github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/text"
+	docpdf "github.com/ivanvanderbyl/docmill/v2/pkg/pdf"
 )
 
 // Backend is the native pure-Go pkg/pdf.Backend (plan 009): document loading,

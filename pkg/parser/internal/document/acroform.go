@@ -6,8 +6,8 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/crt"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 )
 
 const formFieldMaxRecursion = 32

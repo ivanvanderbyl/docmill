@@ -7,8 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/syntax"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/syntax"
 )
 
 // Holder is the default indirect-object resolver (CPDF_IndirectObjectHolder):

@@ -38,9 +38,9 @@ package text
 import (
 	"math"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/crt"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/font"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/font"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/page"
 )
 
 // Constants from the cpdf_textpage.cpp anonymous namespace.

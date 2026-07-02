@@ -9,7 +9,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-const instrumentationName = "github.com/ivanvanderbyl/docmill/pkg/pdf"
+const instrumentationName = "github.com/ivanvanderbyl/docmill/v2/pkg/pdf"
 
 // latencyBoundsSeconds gives histograms useful resolution from ~50us to a few
 // seconds. The default OTel boundaries are tuned for seconds and collapse all of

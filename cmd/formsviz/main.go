@@ -31,7 +31,7 @@ import (
 	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/math/fixed"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser"
 )
 
 func main() {

@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ivanvanderbyl/docmill/internal/benchdp"
+	"github.com/ivanvanderbyl/docmill/v2/internal/benchdp"
 )
 
 func runBenchmark(ctx context.Context, args []string, stdout, stderr io.Writer) int {

@@ -7,9 +7,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/ivanvanderbyl/docmill/pkg/geom"
-	"github.com/ivanvanderbyl/docmill/pkg/page"
-	"github.com/ivanvanderbyl/docmill/pkg/pdf"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/pdf"
 	"github.com/stretchr/testify/require"
 )
 

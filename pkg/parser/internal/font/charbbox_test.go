@@ -5,7 +5,7 @@ package font
 import (
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 )
 
 // fontWithDescriptor builds a simple Type1 font with a /FontDescriptor carrying

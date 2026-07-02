@@ -16,10 +16,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/ivanvanderbyl/docmill/pkg/geom"
-	"github.com/ivanvanderbyl/docmill/pkg/page"
-	"github.com/ivanvanderbyl/docmill/pkg/render"
-	doctable "github.com/ivanvanderbyl/docmill/pkg/table"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/render"
+	doctable "github.com/ivanvanderbyl/docmill/v2/pkg/table"
 )
 
 type Backend interface {

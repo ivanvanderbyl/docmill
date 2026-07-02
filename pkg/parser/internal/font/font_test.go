@@ -6,7 +6,7 @@ package font
 import (
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 )
 
 func name(s string) *objects.Name { return objects.NewName(s) }

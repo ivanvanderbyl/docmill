@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/ivanvanderbyl/docmill/pkg/geom"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
 )
 
 // Table-of-contents detection — a geometry-only (no literal-text) detector for

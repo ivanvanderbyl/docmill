@@ -9,7 +9,7 @@
 // source for text extraction) is reproduced.
 package font
 
-import "github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
+import "github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 
 // loadFontDescriptor ports CPDF_Font::LoadFontDescriptor (cpdf_font.cpp:153).
 func (f *Font) loadFontDescriptor(desc *objects.Dictionary) {

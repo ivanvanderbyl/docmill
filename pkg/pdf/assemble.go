@@ -5,8 +5,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/ivanvanderbyl/docmill/pkg/geom"
-	"github.com/ivanvanderbyl/docmill/pkg/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
 )
 
 // ParagraphOptions tunes line/paragraph grouping. Zero values get sane defaults.

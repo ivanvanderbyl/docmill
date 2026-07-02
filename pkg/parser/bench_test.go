@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser"
-	docpdf "github.com/ivanvanderbyl/docmill/pkg/pdf"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser"
+	docpdf "github.com/ivanvanderbyl/docmill/v2/pkg/pdf"
 )
 
 // benchPDFPath returns the file to profile; override with BENCH_PDF (e.g. a

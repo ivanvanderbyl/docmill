@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/page"
 )
 
 func name(s string) *objects.Name { return objects.NewName(s) }

@@ -9,8 +9,8 @@
 package page
 
 import (
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/crt"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 )
 
 // kNoContentStream is CPDF_PageObject::kNoContentStream.

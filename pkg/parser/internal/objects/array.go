@@ -6,7 +6,7 @@
 // semantics and the strict GetRect/GetMatrix size checks are preserved exactly.
 package objects
 
-import "github.com/ivanvanderbyl/docmill/pkg/parser/internal/crt"
+import "github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
 
 type Array struct {
 	baseObject

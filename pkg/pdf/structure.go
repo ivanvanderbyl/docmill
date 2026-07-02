@@ -6,7 +6,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/ivanvanderbyl/docmill/pkg/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
 )
 
 // bulletMarkers are leading glyphs that, when followed by a space and non-empty

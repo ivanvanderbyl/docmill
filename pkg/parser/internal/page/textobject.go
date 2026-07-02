@@ -7,8 +7,8 @@
 package page
 
 import (
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/crt"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/font"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/font"
 )
 
 // InvalidCharCode is CPDF_Font::kInvalidCharCode (static_cast<uint32_t>(-1)):

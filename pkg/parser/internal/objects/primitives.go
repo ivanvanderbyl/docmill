@@ -5,7 +5,7 @@ package objects
 import (
 	"strconv"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/crt"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
 )
 
 // --- Boolean (CPDF_Boolean) ---

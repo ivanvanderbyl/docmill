@@ -2,7 +2,7 @@
 
 **Fast, deterministic PDF → Markdown in pure Go.**
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/ivanvanderbyl/docmill.svg)](https://pkg.go.dev/github.com/ivanvanderbyl/docmill)
+[![Go Reference](https://pkg.go.dev/badge/github.com/ivanvanderbyl/docmill/v2.svg)](https://pkg.go.dev/github.com/ivanvanderbyl/docmill/v2)
 ![Go 1.26+](https://img.shields.io/badge/go-1.26%2B-00ADD8)
 ![License BSL 1.1](https://img.shields.io/badge/license-BSL%201.1-blue)
 
@@ -40,7 +40,7 @@ page — so it generalises across documents instead of overfitting a corpus.
 ## Install
 
 ```bash
-go install github.com/ivanvanderbyl/docmill/cmd/docmill@latest
+go install github.com/ivanvanderbyl/docmill/v2/cmd/docmill@latest
 ```
 
 Or build from a clone:
@@ -89,8 +89,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser"
-	"github.com/ivanvanderbyl/docmill/pkg/pdf"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/pdf"
 )
 
 func main() {

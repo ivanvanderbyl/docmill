@@ -6,8 +6,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser"
-	docpdf "github.com/ivanvanderbyl/docmill/pkg/pdf"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser"
+	docpdf "github.com/ivanvanderbyl/docmill/v2/pkg/pdf"
 )
 
 // runConvert converts a single PDF path (args[0]) to Markdown on stdout using

@@ -3,8 +3,8 @@ package table_test
 import (
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/page"
-	"github.com/ivanvanderbyl/docmill/pkg/table"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/table"
 	"github.com/stretchr/testify/require"
 )
 

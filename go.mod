@@ -1,4 +1,4 @@
-module github.com/ivanvanderbyl/docmill
+module github.com/ivanvanderbyl/docmill/v2
 
 go 1.26.1
 

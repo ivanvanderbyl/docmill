@@ -9,7 +9,7 @@ package parser
 import (
 	"slices"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 )
 
 // Constants (cpdf_parser.h / .cpp). kMaxObjectNumber was raised from 1M for

@@ -7,7 +7,7 @@
 // objects (not codec) so codec stays free of the PDF object model.
 package objects
 
-import "github.com/ivanvanderbyl/docmill/pkg/parser/internal/codec"
+import "github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/codec"
 
 type decoderEntry struct {
 	name  string

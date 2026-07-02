@@ -9,7 +9,7 @@ package objects
 import (
 	"sort"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/crt"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
 )
 
 type Dictionary struct {

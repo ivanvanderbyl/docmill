@@ -17,7 +17,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ivanvanderbyl/docmill/pkg/telemetry"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/telemetry"
 )
 
 func main() {

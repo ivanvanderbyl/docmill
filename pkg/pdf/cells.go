@@ -4,8 +4,8 @@ import (
 	"math"
 	"strings"
 
-	"github.com/ivanvanderbyl/docmill/pkg/geom"
-	"github.com/ivanvanderbyl/docmill/pkg/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
 )
 
 // MergeOptions tunes fragmented-cell merging. Zero values use the same defaults

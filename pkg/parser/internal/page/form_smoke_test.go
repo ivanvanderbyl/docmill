@@ -3,7 +3,7 @@ package page
 import (
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 )
 
 // A page whose content does `/Fm1 Do`, where Fm1 is a Form XObject that draws

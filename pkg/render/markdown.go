@@ -9,7 +9,7 @@ import (
 
 	md "github.com/ivanvanderbyl/markdown"
 
-	"github.com/ivanvanderbyl/docmill/pkg/table"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/table"
 )
 
 func Table(data table.Data) (string, error) {

@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser"
 	"github.com/stretchr/testify/require"
 )
 

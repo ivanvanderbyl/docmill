@@ -10,7 +10,7 @@ package font
 import (
 	"sort"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/syntax"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/syntax"
 )
 
 // codingScheme mirrors CPDF_CMap::CodingScheme.

@@ -4,7 +4,7 @@ package syntax
 import (
 	"bytes"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 )
 
 // kParserMaxRecursionDepth bounds malicious nesting (crbug fuzz fix).

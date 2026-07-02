@@ -49,8 +49,8 @@ import (
 	"math"
 	"sort"
 
-	"github.com/ivanvanderbyl/docmill/pkg/geom"
-	"github.com/ivanvanderbyl/docmill/pkg/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
 )
 
 // Geometry literals shared by the directional predicates and the search-rect

@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser"
-	"github.com/ivanvanderbyl/docmill/pkg/pdf"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/pdf"
 )
 
 type Corpus struct {

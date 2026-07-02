@@ -16,7 +16,7 @@ import (
 	"slices"
 	"unicode/utf16"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 )
 
 // FontStyle flag constants (core/fxge/fx_font.h:29); only the flags this port

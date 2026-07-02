@@ -3,7 +3,7 @@ package geom_test
 import (
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/geom"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
 	"github.com/stretchr/testify/require"
 )
 

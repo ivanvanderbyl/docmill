@@ -9,7 +9,7 @@
 // plan 009 parses, it never writes. See plan 009 Phase B.
 package objects
 
-import "github.com/ivanvanderbyl/docmill/pkg/parser/internal/crt"
+import "github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
 
 // ObjectType mirrors CPDF_Object::Type (1-based, in this exact order).
 type ObjectType int

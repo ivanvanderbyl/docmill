@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/parser"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/parser"
 )
 
 // buildPDF assembles a minimal classic-xref PDF from object bodies (object i+1),

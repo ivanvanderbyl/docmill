@@ -5,8 +5,8 @@ package parser
 import (
 	"bytes"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/syntax"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/syntax"
 )
 
 // Error mirrors CPDF_Parser::Error.

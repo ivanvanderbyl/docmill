@@ -9,8 +9,8 @@
 package textline
 
 import (
-	"github.com/ivanvanderbyl/docmill/pkg/geom"
-	"github.com/ivanvanderbyl/docmill/pkg/page"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
 )
 
 // ParagraphTextLine is a visual line — one PDF baseline's worth of words,

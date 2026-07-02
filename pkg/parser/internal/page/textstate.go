@@ -9,7 +9,7 @@ package page
 import (
 	"math"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/font"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/font"
 )
 
 // TextRenderingMode mirrors the Tr operand (cpdf_textstate.h:21).

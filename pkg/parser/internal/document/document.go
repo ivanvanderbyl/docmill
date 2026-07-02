@@ -7,8 +7,8 @@ package document
 import (
 	"sync"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/parser"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/parser"
 )
 
 const kPageMaxNum = 0xFFFFF // 1048575

@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ivanvanderbyl/docmill/pkg/forms"
-	"github.com/ivanvanderbyl/docmill/pkg/parser"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/forms"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser"
 )
 
 type acroformValueFile struct {

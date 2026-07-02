@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/document"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/font"
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/parser"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/document"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/font"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/parser"
 )
 
 func TestPerGlyphCharBBox(t *testing.T) {

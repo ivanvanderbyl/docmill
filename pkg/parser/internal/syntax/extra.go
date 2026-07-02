@@ -7,7 +7,7 @@ package syntax
 import (
 	"bytes"
 
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 )
 
 // GetDirectNum reads the next token and returns its unsigned value, or 0 if it

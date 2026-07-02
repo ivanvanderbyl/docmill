@@ -6,7 +6,7 @@ package page
 import (
 	"sort"
 
-	"github.com/ivanvanderbyl/docmill/pkg/geom"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
 )
 
 type TextCell struct {

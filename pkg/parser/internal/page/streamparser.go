@@ -8,7 +8,7 @@
 package page
 
 import (
-	"github.com/ivanvanderbyl/docmill/pkg/parser/internal/objects"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 )
 
 // StreamElementType mirrors CPDF_StreamParser::ElementType.
