@@ -1,0 +1,456 @@
+package pdf
+
+import (
+	"math"
+	"sort"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/ivanvanderbyl/docmill/pkg/geom"
+	"github.com/ivanvanderbyl/docmill/pkg/page"
+	"github.com/ivanvanderbyl/docmill/pkg/textline"
+)
+
+// The shared visual-line model now lives in pkg/textline (a low-level package
+// depending only on pkg/page and pkg/geom) so pkg/table can build on the same
+// type without an import cycle. pkg/pdf keeps these aliases so all existing
+// unqualified code (the producer, clustering, heading/paragraph/structure
+// detectors, and the markdown writer) continues to work unchanged.
+type (
+	ParagraphTextLine = textline.ParagraphTextLine
+	TextLineWord      = textline.Word
+	LineElement       = textline.LineElement
+)
+
+// LineElement pipeline — the shared visual-line model that the whole downstream
+// pipeline uses (line assembly → paragraphs / heading detection / table-grid
+// estimation / markdown writer).
+//
+// This file defines the node types and the single producer AssembleLineElements,
+// which is the existing groupLines baseline-clustering promoted to emit
+// ParagraphTextLine + LineElement runs.
+
+// AssembleLineElements is the single producer of ParagraphTextLines from raw
+// text cells.
+//
+// It clusters cells into visual baselines by vertical centre (matching
+// groupLines' lineTolerance), orders each line's words left-to-right, and
+// splits each line into LineElement runs by font transitions (bold/italic/
+// size/name). The result is consumed by the table-region detector, the
+// heading detector, and the paragraph assembler — one shared line model.
+//
+// lineTolerance is the maximum vertical-centre distance for two cells to be
+// on the same baseline (ParagraphOptions.LineTolerance default = 4).
+func AssembleLineElements(cells []page.TextCell, lineTolerance float64) []ParagraphTextLine {
+	lines := clusterParagraphTextLines(cells, lineTolerance)
+	for i := range lines {
+		lines[i].ReadingOrder = i
+	}
+	return lines
+}
+
+// clusterParagraphTextLines clusters non-empty cells into horizontal visual
+// lines by vertical centre (within lineTolerance), returning ParagraphTextLines
+// top-to-bottom with their text joined left-to-right.
+func clusterParagraphTextLines(cells []page.TextCell, lineTolerance float64) []ParagraphTextLine {
+	type sortableCell struct {
+		cell   page.TextCell
+		center float64
+	}
+
+	sortable := make([]sortableCell, 0, len(cells))
+	for _, cell := range cells {
+		if strings.TrimSpace(cell.Text) == "" {
+			continue
+		}
+		sortable = append(sortable, sortableCell{
+			cell:   cell,
+			center: (cell.Box.T + cell.Box.B) / 2,
+		})
+	}
+	if len(sortable) == 0 {
+		return nil
+	}
+
+	sort.SliceStable(sortable, func(i, j int) bool {
+		if sortable[i].center != sortable[j].center {
+			return sortable[i].center < sortable[j].center
+		}
+		return sortable[i].cell.Box.L < sortable[j].cell.Box.L
+	})
+
+	var lines []ParagraphTextLine
+	var current []page.TextCell
+	lineCenter := sortable[0].center
+	lineTop := math.Min(sortable[0].cell.Box.T, sortable[0].cell.Box.B)
+	lineBottom := math.Max(sortable[0].cell.Box.T, sortable[0].cell.Box.B)
+
+	flush := func() {
+		if len(current) == 0 {
+			return
+		}
+		lines = append(lines, buildParagraphTextLine(current))
+		current = nil
+	}
+
+	for _, item := range sortable {
+		if len(current) > 0 && !sameVisualLine(item.cell.Box, item.center, lineTop, lineBottom, lineCenter, lineTolerance) {
+			flush()
+			lineCenter = item.center
+			lineTop = math.Min(item.cell.Box.T, item.cell.Box.B)
+			lineBottom = math.Max(item.cell.Box.T, item.cell.Box.B)
+		}
+		if len(current) == 0 {
+			lineCenter = item.center
+			lineTop = math.Min(item.cell.Box.T, item.cell.Box.B)
+			lineBottom = math.Max(item.cell.Box.T, item.cell.Box.B)
+		}
+		current = append(current, item.cell)
+		cellTop := math.Min(item.cell.Box.T, item.cell.Box.B)
+		cellBottom := math.Max(item.cell.Box.T, item.cell.Box.B)
+		if cellTop < lineTop {
+			lineTop = cellTop
+		}
+		if cellBottom > lineBottom {
+			lineBottom = cellBottom
+		}
+		lineCenter = (lineTop + lineBottom) * 0.5
+	}
+	flush()
+
+	return mergeInlineFragmentLines(lines)
+}
+
+// buildParagraphTextLine sorts cells left-to-right, joins their trimmed texts
+// using geometry-aware separators, records the enclosing box, smallest source
+// index and list-marker hints, and populates the LineElement run model
+// (Words/Elements) so downstream inline-formatting consumers see the same line.
+func buildParagraphTextLine(cells []page.TextCell) ParagraphTextLine {
+	sort.SliceStable(cells, func(i, j int) bool {
+		return cells[i].Box.L < cells[j].Box.L
+	})
+
+	boxes := make([]geom.Box, 0, len(cells))
+	minIndex := cells[0].Index
+	fontSize := cells[0].FontSize
+	for _, cell := range cells {
+		boxes = append(boxes, cell.Box)
+		if cell.Index < minIndex {
+			minIndex = cell.Index
+		}
+		if cell.FontSize > fontSize {
+			fontSize = cell.FontSize
+		}
+	}
+
+	full := append([]page.TextCell(nil), cells...)
+	listCandidate, listContentL := geometricListMarker(full)
+	box := geom.EnclosingBox(boxes...)
+	words := lineWords(full)
+	return ParagraphTextLine{
+		BBox:          box,
+		FontBBox:      box,
+		Words:         words,
+		Text:          joinLineCellTexts(full),
+		FontSize:      fontSize,
+		Elements:      lineElements(words),
+		Cells:         full,
+		MinIndex:      minIndex,
+		ListCandidate: listCandidate,
+		ListContentL:  listContentL,
+	}
+}
+
+// sameVisualLine reports whether a cell belongs on the line currently being
+// accumulated, by vertical-centre proximity with a height-overlap fallback.
+func sameVisualLine(box geom.Box, center, lineTop, lineBottom, lineCenter, lineTolerance float64) bool {
+	if math.Abs(center-lineCenter) <= lineTolerance {
+		return true
+	}
+	cellTop := math.Min(box.T, box.B)
+	cellBottom := math.Max(box.T, box.B)
+	cellHeight := cellBottom - cellTop
+	lineHeight := lineBottom - lineTop
+	if cellHeight <= 0 || lineHeight <= 0 {
+		return false
+	}
+	overlap := math.Min(lineBottom, cellBottom) - math.Max(lineTop, cellTop)
+	if overlap <= 0 {
+		return false
+	}
+	overlapRatio := overlap / math.Min(lineHeight, cellHeight)
+	if overlapRatio < 0.6 {
+		return false
+	}
+	return math.Abs(center-lineCenter) <= math.Max(lineTolerance, math.Max(lineHeight, cellHeight)*0.75)
+}
+
+// mergeInlineFragmentLines folds a tiny single-glyph fragment line into the
+// adjacent body line it visually overlaps (super/subscripts, stray accents).
+func mergeInlineFragmentLines(lines []ParagraphTextLine) []ParagraphTextLine {
+	if len(lines) < 2 {
+		return lines
+	}
+	out := make([]ParagraphTextLine, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		if isSmallInlineFragmentLine(line) {
+			if i+1 < len(lines) && inlineFragmentBelongsToLine(line, lines[i+1]) {
+				mergedCells := append(append([]page.TextCell(nil), line.Cells...), lines[i+1].Cells...)
+				out = append(out, buildParagraphTextLine(mergedCells))
+				i++
+				continue
+			}
+			if len(out) > 0 && inlineFragmentBelongsToLine(line, out[len(out)-1]) {
+				mergedCells := append(append([]page.TextCell(nil), out[len(out)-1].Cells...), line.Cells...)
+				out[len(out)-1] = buildParagraphTextLine(mergedCells)
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+func isSmallInlineFragmentLine(line ParagraphTextLine) bool {
+	visible := 0
+	for _, cell := range line.Cells {
+		if strings.TrimSpace(cell.Text) == "" || isListSpacerText(cell.Text) {
+			continue
+		}
+		visible++
+		if visible > 1 {
+			return false
+		}
+	}
+	if visible != 1 || line.BBox.Height() <= 0 {
+		return false
+	}
+	reference := line.FontSize
+	if reference <= 0 {
+		reference = 10
+	}
+	return line.BBox.Height() <= math.Max(4, reference*0.45)
+}
+
+func inlineFragmentBelongsToLine(fragment, line ParagraphTextLine) bool {
+	fragmentHeight := fragment.BBox.Height()
+	lineHeight := line.BBox.Height()
+	if fragmentHeight <= 0 || lineHeight <= 0 {
+		return false
+	}
+	overlap := math.Min(fragment.BBox.B, line.BBox.B) - math.Max(fragment.BBox.T, line.BBox.T)
+	if overlap <= 0 || overlap/fragmentHeight < 0.6 {
+		return false
+	}
+	slack := math.Max(6, math.Max(fragment.FontSize, line.FontSize))
+	centerX := (fragment.BBox.L + fragment.BBox.R) * 0.5
+	return centerX >= line.BBox.L-slack && centerX <= line.BBox.R+slack
+}
+
+// lineWords converts a line's cells (left-to-right) into TextLineWords.
+// Font formatting is taken from the cell's FontName/FontWeight/FontFlags
+// (surfaced from PDFium with CollectFontInformation). This is the faithful
+// source for the LineElement run-splitter and the markdown writer's inline
+// formatting.
+func lineWords(cells []page.TextCell) []TextLineWord {
+	ordered := append([]page.TextCell(nil), cells...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Box.L < ordered[j].Box.L })
+	words := make([]TextLineWord, 0, len(ordered))
+	for _, c := range ordered {
+		text := strings.TrimSpace(c.Text)
+		if text == "" || isListSpacerText(text) {
+			continue
+		}
+		words = append(words, TextLineWord{
+			Value:      text,
+			BBox:       c.Box,
+			FontBBox:   c.Box,
+			FontSize:   c.FontSize,
+			FontName:   c.FontName,
+			Bold:       c.IsBold(),
+			Italic:     c.IsItalic(),
+			Color:      c.Color,
+			Source:     c,
+			Confidence: 1.0,
+		})
+	}
+	return words
+}
+
+// lineElements splits a line's words into formatting runs (LineElements).
+// A new run starts on any font transition: bold, italic, font size, or
+// font name. Each run is an inline-element segment the markdown writer walks
+// for bold/italic/code emission.
+func lineElements(words []TextLineWord) []LineElement {
+	if len(words) == 0 {
+		return nil
+	}
+	runs := make([]LineElement, 0, 1)
+	current := LineElement{
+		Bold: words[0].Bold, Italic: words[0].Italic,
+		Words: []TextLineWord{words[0]},
+	}
+	current.BBox = words[0].BBox
+	current.Text = words[0].Value
+	for i := 1; i < len(words); i++ {
+		w := words[i]
+		sameRun := w.Bold == current.Bold &&
+			w.Italic == current.Italic &&
+			w.Source.IsMonospace() == current.Words[0].Source.IsMonospace() &&
+			math.Abs(w.FontSize-current.Words[0].FontSize) < 0.5 &&
+			w.FontName == current.Words[0].FontName
+		if sameRun {
+			current.Words = append(current.Words, w)
+			current.BBox = geom.EnclosingBox(current.BBox, w.BBox)
+			current.Text = joinRunText(current.Text, w.Value)
+			continue
+		}
+		runs = append(runs, current)
+		current = LineElement{
+			Bold: w.Bold, Italic: w.Italic,
+			Words: []TextLineWord{w},
+			BBox:  w.BBox,
+			Text:  w.Value,
+		}
+	}
+	runs = append(runs, current)
+	return runs
+}
+
+// formatLineElements reconstructs a visual line's text from its LineElement
+// runs, wrapping each run with Markdown inline-formatting markers driven by the
+// run's font metadata (Bold/Italic and per-word IsMonospace). This is the
+// opt-in path used by mergeLines when EnableInlineFormatting is set; the
+// default path uses line.Text unchanged.
+//
+// Wrapping rules (code takes precedence over bold/italic for a run):
+//   - all words monospace -> `text` (inline code)
+//   - bold && italic       -> ***text***
+//   - bold                 -> **text**
+//   - italic               -> *text*
+//   - otherwise            -> text (plain)
+//
+// Whitespace-only or empty runs are emitted unwrapped. Runs are concatenated in
+// order; each run's internal text is rebuilt from its source cells via the same
+// geometry-aware joinLineCellTexts the default path uses (runSourceText), and the
+// separator inserted between two adjacent runs is decided geometrically from
+// their boundary source cells via shouldSeparateLineCells. So the formatted text
+// equals the default line text plus the formatting markers, except in the narrow
+// case of a standalone hyphen that forms its own run by a font transition
+// relative to both neighbours (its 3-cell compaction context is truncated at the
+// run boundary) — a rare edge that never affects the default (off) output.
+func formatLineElements(line ParagraphTextLine) string {
+	if len(line.Elements) == 0 {
+		return line.Text
+	}
+	var builder strings.Builder
+	for i := range line.Elements {
+		element := line.Elements[i]
+		if i > 0 {
+			builder.WriteString(interRunSeparator(line.Elements[i-1], element))
+		}
+		builder.WriteString(formatLineElement(element))
+	}
+	return builder.String()
+}
+
+// interRunSeparator returns " " when the plain-text join would put a space
+// between the last word of left and the first word of right, and "" otherwise.
+// It reuses shouldSeparateLineCells (geometry/font-metric) so spacing matches
+// the default joinLineCellTexts path.
+func interRunSeparator(left, right LineElement) string {
+	if len(left.Words) == 0 || len(right.Words) == 0 {
+		return " "
+	}
+	boundary := []page.TextCell{
+		left.Words[len(left.Words)-1].Source,
+		right.Words[0].Source,
+	}
+	if shouldSeparateLineCells(boundary, 1) {
+		return " "
+	}
+	return ""
+}
+
+// runSourceText reconstructs a run's text from its source cells using the same
+// geometry-aware joinLineCellTexts the default (plain) path uses, so within-run
+// glyph compaction (tight alphanumeric runs, standalone hyphen/period/apostrophe)
+// is identical to line.Text. This is what keeps "Sec3", "co-op" and "www.com"
+// intact when inline formatting is enabled, rather than the always-spaced
+// joinRunText that the run-splitter uses for element.Text.
+func runSourceText(element LineElement) string {
+	if len(element.Words) == 0 {
+		return element.Text
+	}
+	cells := make([]page.TextCell, 0, len(element.Words))
+	for _, word := range element.Words {
+		cells = append(cells, word.Source)
+	}
+	return joinLineCellTexts(cells)
+}
+
+// formatLineElement wraps a single run's text with inline-formatting markers.
+func formatLineElement(element LineElement) string {
+	text := runSourceText(element)
+	if strings.TrimSpace(text) == "" {
+		return text
+	}
+	if isMonospaceRun(element) {
+		return "`" + text + "`"
+	}
+	switch {
+	case element.Bold && element.Italic:
+		return "***" + text + "***"
+	case element.Bold:
+		return "**" + text + "**"
+	case element.Italic:
+		return "*" + text + "*"
+	default:
+		return text
+	}
+}
+
+// isMonospaceRun reports whether every word in the run comes from a fixed-pitch
+// (monospace) font cell — the signal for an inline code span.
+func isMonospaceRun(element LineElement) bool {
+	if len(element.Words) == 0 {
+		return false
+	}
+	for _, word := range element.Words {
+		if !word.Source.IsMonospace() {
+			return false
+		}
+	}
+	return true
+}
+
+// joinRunText joins two words in a formatting run, adding a space unless
+// the words are hyphenated (the previous word ends with a hyphen and the
+// next starts lowercase — a soft hyphenation break).
+func joinRunText(left, right string) string {
+	if left == "" {
+		return right
+	}
+	if right == "" {
+		return left
+	}
+	if isSoftHyphenation(left, right) {
+		return strings.TrimSuffix(left, "-") + right
+	}
+	return left + " " + right
+}
+
+func isSoftHyphenation(left, right string) bool {
+	if !strings.HasSuffix(left, "-") || len(left) < 2 {
+		return false
+	}
+	if len(right) == 0 {
+		return false
+	}
+	first, _ := utf8.DecodeRuneInString(right)
+	return unicode.IsLower(first)
+}
+
+// (utf8DecodeRune removed — use unicode/utf8.DecodeRuneInString directly)

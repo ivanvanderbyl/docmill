@@ -1,0 +1,24 @@
+.deps
+.deps/
+.upstream-docling
+.upstream-docling/
+.upstream-docling-core
+.upstream-docling-core/
+bin/
+__pycache__/
+*.pyc
+benchmarks/dpbench/corpus/
+benchmarks/dpbench/outputs/
+benchmarks/dpbench/results/
+benchmarks/dpbench/tools.json
+*.prof
+*.test
+/docmill
+benchmarks/dpbench/cache/
+benchmarks/dpbench/tools.cachepop.json
+benchmarks/dpbench/tools.others.json
+
+# Git worktrees for isolated feature work
+.worktrees/
+testdocs/*.pdf
+testdocs/*.md

@@ -1,0 +1,98 @@
+# Taskfile for docmill — https://taskfile.dev
+# Install the runner: `go install github.com/go-task/task/v3/cmd/task@latest`
+# Run `task` (or `task --list`) to see available tasks.
+version: '3'
+
+tasks:
+  default:
+    desc: Run all checks (fmt-check, vet, test)
+    cmds:
+      - task: check
+
+  check:
+    desc: gofmt check, go vet, and go test across the whole module
+    cmds:
+      - task: fmt-check
+      - task: vet
+      - task: test
+
+  vet:
+    desc: go vet the whole module
+    cmds:
+      - go vet ./...
+
+  test:
+    desc: go test the whole module
+    cmds:
+      - go test ./... -count=1
+
+  fmt:
+    desc: format Go source with gofmt
+    cmds:
+      - gofmt -w pkg cmd internal
+
+  fmt-check:
+    desc: fail if any Go source is not gofmt-clean
+    cmds:
+      - |
+        out="$(gofmt -l pkg cmd internal)"
+        if [ -n "$out" ]; then echo "unformatted:"; echo "$out"; exit 1; fi
+
+  tidy:
+    desc: go mod tidy
+    cmds:
+      - go mod tidy
+
+  benchmark:dpbench:fetch:
+    desc: 'Materialise docling-project/docling-dpbench via the Hugging Face rows API'
+    cmds:
+      - '{{.PYTHON | default "python3"}} benchmarks/dpbench/materialize.py --out benchmarks/dpbench/corpus {{.CLI_ARGS}}'
+
+  benchmark:dpbench:build:
+    desc: build the native docmill binary used by the DPBench harness
+    cmds:
+      - mkdir -p bin
+      - go build -o bin/docmill-bench ./cmd/docmill
+
+  benchmark:dpbench:
+    desc: 'Run the cross-tool DPBench benchmark (copy/edit benchmarks/dpbench/tools.json first)'
+    deps:
+      - benchmark:dpbench:build
+    cmds:
+      - go run ./cmd/docmill benchmark -corpus benchmarks/dpbench/corpus -tools benchmarks/dpbench/tools.json -outputs benchmarks/dpbench/outputs -out docs/benchmarks/dpbench.md -json benchmarks/dpbench/results/dpbench.json {{.CLI_ARGS}}
+
+  # --- Forms overlay validator (renders with real PDFium via cgo) ---
+  # PDFIUM_HOME must point at a PDFium install with lib/pkgconfig/pdfium.pc;
+  # defaults to a .deps/pdfium copy in the repo root.
+
+  formsviz:build:
+    desc: build the pdfium-cgo forms overlay validator into bin/
+    env:
+      PKG_CONFIG_PATH: '{{.PDFIUM_HOME | default (printf "%s/.deps/pdfium" .TASKFILE_DIR)}}/lib/pkgconfig'
+      CGO_ENABLED: "1"
+    cmds:
+      - mkdir -p bin
+      - go build -tags pdfium_cgo -o bin/formsviz ./cmd/formsviz
+
+  formsviz:
+    desc: 'render form-field overlays (task formsviz -- [-dpi 144] [-out bin] input.pdf)'
+    deps:
+      - formsviz:build
+    env:
+      DYLD_LIBRARY_PATH: '{{.PDFIUM_HOME | default (printf "%s/.deps/pdfium" .TASKFILE_DIR)}}/lib'
+    cmds:
+      - bin/formsviz {{.CLI_ARGS}}
+
+  # --- Observability (OpenTelemetry -> VictoriaMetrics + VictoriaTraces) ---
+  # Endpoints default to a local VictoriaMetrics (:8428) and VictoriaTraces
+  # (:10428); override with OTEL_METRICS / OTEL_TRACES env vars.
+  # See deploy/observability/README.md.
+
+  obs:run:
+    desc: 'Convert a PDF with telemetry enabled (e.g. task obs:run -- input.pdf)'
+    env:
+      DOCMILL_OTEL: "1"
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: '{{.OTEL_METRICS | default "http://localhost:8428/opentelemetry/v1/metrics"}}'
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: '{{.OTEL_TRACES | default "http://localhost:10428/insert/opentelemetry/v1/traces"}}'
+    cmds:
+      - go run ./cmd/docmill {{.CLI_ARGS}}

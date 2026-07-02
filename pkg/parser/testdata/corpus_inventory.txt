@@ -1,0 +1,71 @@
+Plan 009 — corpus feature inventory (Phase 0 audit)
+====================================================
+
+Audit method: raw-byte grep over .upstream-docling/tests/data/pdf/*.pdf for the
+listed markers. This is a LOWER BOUND: markers inside compressed object streams
+are not visible to a raw grep, so a "." may still hide the feature. The
+authoritative per-feature verification was the differential gate (tier 2/4)
+against the PDFium oracle (apparatus since retired; see the golden-similarity
+gate in similarity_test.go for the surviving regression floor).
+
+Legend: Y = marker present in raw bytes, . = not found in raw bytes.
+
+pdf                              Encrypt  Linearized CID    Type0  Type3  WMode1
+2203.01017v2.pdf                 .        .          Y      Y      .      .
+2206.01062.pdf                   .        .          Y      Y      Y      .
+2305.03393v1-pg9.pdf             .        .          .      .      .      .
+2305.03393v1.pdf                 .        .          Y      Y      .      .
+amt_handbook_sample.pdf          .        .          Y      .      .      .
+code_and_formula.pdf             .        Y          .      .      .      .
+multi_page.pdf                   .        .          .      .      .      .
+normal_4pages.pdf                .        .          .      .      .      .
+picture_classification.pdf       .        Y          .      .      .      .
+redp5110_sampled.pdf             .        .          Y      Y      .      .
+right_to_left_01.pdf             .        .          Y      Y      .      .
+right_to_left_02.pdf             .        .          Y      Y      .      .
+right_to_left_03.pdf             .        .          Y      Y      .      .
+skipped_1page.pdf                .        .          Y      Y      .      .
+skipped_2pages.pdf               .        Y          Y      .      .      .
+table_mislabeled_as_picture.pdf  .        .          Y      Y      .      .
+
+
+Per-feature coverage summary (which phase consumes it)
+------------------------------------------------------
+- Object/xref/page-tree (Phase D)        : ALL 16 PDFs.
+- Linearized header (Phase D)            : code_and_formula, picture_classification,
+                                           skipped_2pages.
+- Stream filters / Flate (Phase B)       : ALL (every PDF has Flate content streams).
+- Simple + CID/Type0 fonts (Phase G)     : CID/Type0 in 11 PDFs; simple-only in
+                                           2305.03393v1-pg9, multi_page, normal_4pages,
+                                           code_and_formula, picture_classification,
+                                           amt_handbook_sample.
+- ToUnicode / Unicode mapping (Phase G)  : ALL (text extraction needs it).
+- RTL reading order (Phase H)            : right_to_left_01/02/03.
+- Type3 fonts (Phase G)                  : 2206.01062 only — THIN (1 PDF).
+
+Gaps — phases that are CORPUS-UNVERIFIED, with follow-up sources
+---------------------------------------------------------------
+These features are absent from the plan-004 corpus. Each phase below must be
+marked "corpus-unverified" until a per-feature PDF is added. Candidates already
+exist in the PDFium checkout under testing/resources/ (BSD-licensed, compatible):
+
+- ENCRYPTION (Phase E): NO encrypted PDF in corpus.
+  Follow-up: copy into pkg/parser/testdata/feature/ when Phase E lands:
+    encrypted_hello_world_r2.pdf  (revision 2, RC4)
+    encrypted_hello_world_r3.pdf  (revision 3, RC4)
+    encrypted_hello_world_r5.pdf  (revision 5, AES-256)
+    encrypted_hello_world_r6.pdf  (revision 6, AES-256)
+    encrypted.pdf                 (AES-128 / revision 4)
+  Source: https://pdfium.googlesource.com/pdfium/+/refs/heads/main/testing/resources/
+
+- VERTICAL WRITING / WMode 1 (Phase G CID-vertical metrics, Phase H vertical
+  reading order): NO /WMode 1 PDF in corpus.
+  Follow-up: copy testing/resources/vertical_text.pdf into testdata/feature/
+  when Phase G vertical metrics are implemented (CTTGSUB).
+
+- TYPE3 (Phase G): only 2206.01062 exercises Type3, and only lightly. If Phase G
+  Type3 char-loading proves under-tested, add a focused Type3 resource PDF.
+
+Note: pulling these per-feature PDFs is deferred to the phase that needs them
+(E and G), not done in Phase 0, because the encrypted/vertical paths are not yet
+implemented. This file is the tracked TODO.

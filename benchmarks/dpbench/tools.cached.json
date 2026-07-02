@@ -1,0 +1,79 @@
+{
+  "tools": [
+    {
+      "name": "docmill",
+      "command": [
+        "bin/docmill-bench",
+        "{{input}}"
+      ],
+      "output_mode": "stdout",
+      "timeout_seconds": 120
+    },
+    {
+      "name": "docling",
+      "command": [
+        "benchmarks/dpbench/replay_cache.sh",
+        "docling",
+        "{{input}}",
+        "{{output}}"
+      ],
+      "output_mode": "file",
+      "timeout_seconds": 60
+    },
+    {
+      "name": "opendataloader",
+      "command": [
+        "benchmarks/dpbench/replay_cache.sh",
+        "opendataloader",
+        "{{input}}",
+        "{{output}}"
+      ],
+      "output_mode": "file",
+      "timeout_seconds": 60
+    },
+    {
+      "name": "markitdown",
+      "command": [
+        "benchmarks/dpbench/replay_cache.sh",
+        "markitdown",
+        "{{input}}",
+        "{{output}}"
+      ],
+      "output_mode": "file",
+      "timeout_seconds": 60
+    },
+    {
+      "name": "pymupdf4llm",
+      "command": [
+        "benchmarks/dpbench/replay_cache.sh",
+        "pymupdf4llm",
+        "{{input}}",
+        "{{output}}"
+      ],
+      "output_mode": "file",
+      "timeout_seconds": 60
+    },
+    {
+      "name": "liteparse",
+      "command": [
+        "benchmarks/dpbench/replay_cache.sh",
+        "liteparse",
+        "{{input}}",
+        "{{output}}"
+      ],
+      "output_mode": "file",
+      "timeout_seconds": 60
+    },
+    {
+      "name": "pypdf",
+      "command": [
+        "benchmarks/dpbench/replay_cache.sh",
+        "pypdf",
+        "{{input}}",
+        "{{output}}"
+      ],
+      "output_mode": "file",
+      "timeout_seconds": 60
+    }
+  ]
+}

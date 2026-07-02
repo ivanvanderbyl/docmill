@@ -1,0 +1,59 @@
+{
+  "tools": [
+    {
+      "name": "docmill",
+      "command": ["bin/docmill-bench", "{{input}}"],
+      "output_mode": "stdout",
+      "timeout_seconds": 120
+    },
+    {
+      "name": "docling",
+      "version_command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "docling", "--version"],
+      "command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "docling", "{{input}}", "{{output}}"],
+      "output_mode": "file",
+      "timeout_seconds": 600
+    },
+    {
+      "name": "opendataloader",
+      "version_command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "opendataloader", "--version"],
+      "command": ["opendataloader-pdf", "{{input}}", "--format", "markdown", "--to-stdout"],
+      "output_mode": "stdout",
+      "timeout_seconds": 300
+    },
+    {
+      "name": "markitdown",
+      "version_command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "markitdown", "--version"],
+      "command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "markitdown", "{{input}}", "{{output}}"],
+      "output_mode": "file",
+      "timeout_seconds": 300
+    },
+    {
+      "name": "pymupdf4llm",
+      "version_command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "pymupdf4llm", "--version"],
+      "command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "pymupdf4llm", "{{input}}", "{{output}}"],
+      "output_mode": "file",
+      "timeout_seconds": 300
+    },
+    {
+      "name": "opendataloader-hybrid",
+      "version_command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "opendataloader", "--version"],
+      "command": ["opendataloader-pdf", "{{input}}", "--format", "markdown", "--to-stdout", "--hybrid", "docling-fast"],
+      "output_mode": "stdout",
+      "timeout_seconds": 600
+    },
+    {
+      "name": "liteparse",
+      "version_command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "liteparse", "--version"],
+      "command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "liteparse", "{{input}}", "{{output}}"],
+      "output_mode": "file",
+      "timeout_seconds": 600
+    },
+    {
+      "name": "pypdf",
+      "version_command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "pypdf", "--version"],
+      "command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "pypdf", "{{input}}", "{{output}}"],
+      "output_mode": "file",
+      "timeout_seconds": 120
+    }
+  ]
+}

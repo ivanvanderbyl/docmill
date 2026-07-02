@@ -1,0 +1,10 @@
+{
+  "tools": [
+    {
+      "name": "docmill",
+      "command": ["bin/docmill-bench", "{{input}}"],
+      "output_mode": "stdout",
+      "timeout_seconds": 120
+    }
+  ]
+}
