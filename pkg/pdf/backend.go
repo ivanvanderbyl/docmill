@@ -6,7 +6,9 @@ package pdf
 
 import (
 	"context"
+	"fmt"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -227,7 +229,7 @@ func extractPages(ctx context.Context, doc Document, pageCount int, options Extr
 	}
 	if parallelism <= 1 {
 		for index := range pageCount {
-			blocks, size, err := extractPageBlocks(ctx, doc, index, options)
+			blocks, size, err := extractPageBlocksSafe(ctx, doc, index, options)
 			if err != nil {
 				return err
 			}
@@ -249,7 +251,7 @@ func extractPages(ctx context.Context, doc Document, pageCount int, options Extr
 				if err := ctx.Err(); err != nil {
 					return
 				}
-				blocks, size, err := extractPageBlocks(ctx, doc, index, options)
+				blocks, size, err := extractPageBlocksSafe(ctx, doc, index, options)
 				if err != nil {
 					select {
 					case errCh <- err:
@@ -283,6 +285,26 @@ sendJobs:
 	default:
 	}
 	return ctx.Err()
+}
+
+// extractPageBlocksSafe wraps extractPageBlocks with a per-page panic-recovery
+// boundary. The parser reproduces PDFium's behaviour on malformed input and can
+// panic on adversarial PDFs. A panic in a goroutine is unrecoverable by the
+// caller, so during parallel extraction an unguarded panic in a worker would
+// crash the whole process rather than surface to ExtractMarkdown's caller.
+// Recovering in the goroutine that runs each page contains the failure to that
+// page and converts it into an ordinary error: a single malformed page fails
+// the conversion (like any other page error) instead of taking down the
+// process, and callers never need their own recover() regardless of parallelism.
+func extractPageBlocksSafe(ctx context.Context, doc Document, index int, options ExtractionOptions) (blocks []markdownBlock, size geom.Size, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			blocks = nil
+			size = geom.Size{}
+			err = fmt.Errorf("docmill: recovered panic extracting page %d: %v\n%s", index, r, debug.Stack())
+		}
+	}()
+	return extractPageBlocks(ctx, doc, index, options)
 }
 
 func extractPageBlocks(ctx context.Context, doc Document, index int, options ExtractionOptions) ([]markdownBlock, geom.Size, error) {

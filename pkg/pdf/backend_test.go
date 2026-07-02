@@ -1809,6 +1809,45 @@ func TestExtractMarkdownReturnsPageErrors(t *testing.T) {
 	require.ErrorIs(t, err, errFake)
 }
 
+func TestExtractMarkdownContainsPageParsePanicUnderParallelism(t *testing.T) {
+	t.Parallel()
+
+	// An adversarial page whose parsing panics must not crash the process when
+	// pages are extracted in parallel: a panic in a worker goroutine is
+	// unrecoverable by the caller, so docmill must contain it per page and
+	// surface it as an ordinary error.
+	panicPage := fakePage{textCells: func(context.Context) ([]page.TextCell, error) {
+		panic("adversarial page boom")
+	}}
+	good := fakePage{cells: []page.TextCell{pdfTextCell(1, "ok", 0, 0, 40, 10)}}
+	doc := fakeDocument{pages: []fakePage{good, good, panicPage, good}}
+
+	_, err := pdf.ExtractMarkdownWithOptions(context.Background(), doc, pdf.ExtractionOptions{
+		MaxParallelPages: 4,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "adversarial page boom")
+}
+
+func TestExtractMarkdownContainsPageParsePanicWhenSerial(t *testing.T) {
+	t.Parallel()
+
+	// The serial path runs page work in the caller's goroutine, but docmill
+	// still contains the panic so callers never need their own recover().
+	panicPage := fakePage{textCells: func(context.Context) ([]page.TextCell, error) {
+		panic("adversarial page boom")
+	}}
+	doc := fakeDocument{pages: []fakePage{panicPage}}
+
+	_, err := pdf.ExtractMarkdownWithOptions(context.Background(), doc, pdf.ExtractionOptions{
+		MaxParallelPages: 1,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "adversarial page boom")
+}
+
 type fakeDocument struct {
 	pages   []fakePage
 	pageErr error
