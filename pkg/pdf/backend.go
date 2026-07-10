@@ -337,15 +337,17 @@ func joinPageBlocks(blocks []markdownBlock) string {
 }
 
 func extractPage(ctx context.Context, doc Document, index int, options ExtractionOptions, span trace.Span) ([]markdownBlock, geom.Size, error) {
-	pdfPage, err := doc.Page(ctx, index)
+	pdfPage, err := runStage(ctx, "page_open", func(ctx context.Context) (Page, error) {
+		return doc.Page(ctx, index)
+	})
 	if err != nil {
 		return nil, geom.Size{}, err
 	}
-	size, err := pdfPage.Size(ctx)
+	size, err := runStage(ctx, "page_size", pdfPage.Size)
 	if err != nil {
 		return nil, geom.Size{}, err
 	}
-	cells, err := pdfPage.TextCells(ctx)
+	cells, err := runStage(ctx, "text_cells", pdfPage.TextCells)
 	if err != nil {
 		return nil, geom.Size{}, err
 	}
@@ -353,20 +355,20 @@ func extractPage(ctx context.Context, doc Document, index int, options Extractio
 	var wordCells []page.TextCell
 	var formFields []page.FormField
 	if provider, ok := pdfPage.(formFieldProvider); ok {
-		formFields, err = provider.FormFields(ctx)
+		formFields, err = runStage(ctx, "form_fields", provider.FormFields)
 		if err != nil {
 			return nil, geom.Size{}, err
 		}
 	}
 	if options.DetectTables {
 		if provider, ok := pdfPage.(rulingSegmentProvider); ok {
-			rulings, err = provider.RulingSegments(ctx)
+			rulings, err = runStage(ctx, "ruling_segments", provider.RulingSegments)
 			if err != nil {
 				return nil, geom.Size{}, err
 			}
 		}
 		if provider, ok := pdfPage.(wordTextCellProvider); ok {
-			wordCells, err = provider.WordTextCells(ctx)
+			wordCells, err = runStage(ctx, "word_text_cells", provider.WordTextCells)
 			if err != nil {
 				return nil, geom.Size{}, err
 			}
@@ -427,12 +429,14 @@ func pageMarkdownBlocks(ctx context.Context, cells []page.TextCell, wordCells []
 
 	var headingBlocks []markdownBlock
 	if options.DetectHeadings {
+		_, finishStage := startStage(ctx, "heading_detect")
 		protected := protectedHeadingCellIndexes(cells, rulings, options)
 		if options.DetectStructure {
 			protected = mergeProtectedCellIndexes(protected, protectedListLineCellIndexes(cells))
 		}
 		protected = mergeProtectedCellIndexes(protected, denseIndexLineCellIndexes(cells, size))
 		headingBlocks, cells = splitHeadingCellsProtecting(cells, size, protected)
+		finishStage(nil)
 	}
 
 	assembleByColumn := func(textCells []page.TextCell) []markdownBlock {
@@ -457,12 +461,16 @@ func pageMarkdownBlocks(ctx context.Context, cells []page.TextCell, wordCells []
 		blocks := append([]markdownBlock{}, headingBlocks...)
 		blocks = append(blocks, assembleByColumn(cells)...)
 		if options.DetectStructure {
+			_, finishStage := startStage(ctx, "structure")
 			blocks = detectStructure(blocks)
+			finishStage(nil)
 		}
+		_, finishStage := startStage(ctx, "postprocess")
 		blocks = filterFigureInternalLabelBlocks(blocks, size)
 		blocks = splitMarginalPageNumberBlocks(blocks, size)
 		blocks = append(blocks, formBlocks...)
 		sortMarkdownBlocks(blocks, size, !options.ReadingOrder)
+		finishStage(nil)
 		return blocks, nil
 	}
 
@@ -507,8 +515,11 @@ func pageMarkdownBlocks(ctx context.Context, cells []page.TextCell, wordCells []
 	blocks := append([]markdownBlock{}, headingBlocks...)
 	blocks = append(blocks, assembleByColumn(remainingCells)...)
 	if options.DetectStructure {
+		_, finishStage := startStage(ctx, "structure")
 		blocks = detectStructure(blocks)
+		finishStage(nil)
 	}
+	_, finishStage := startStage(ctx, "postprocess")
 	blocks = filterFigureInternalLabelBlocks(blocks, size)
 	blocks = splitMarginalPageNumberBlocks(blocks, size)
 	blocks = append(blocks, formBlocks...)
@@ -531,6 +542,7 @@ func pageMarkdownBlocks(ctx context.Context, cells []page.TextCell, wordCells []
 	}
 
 	sortMarkdownBlocks(blocks, size, !options.ReadingOrder)
+	finishStage(nil)
 	return blocks, nil
 }
 
