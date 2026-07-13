@@ -38,6 +38,45 @@ func TestGetMatrixAndNumbersOrdering(t *testing.T) {
 	}
 }
 
+func TestPathNumberBufferResetsWithoutLosingFixedStorage(t *testing.T) {
+	var numbers pathNumberBuffer
+	for _, value := range []float32{1, 2, 3, 4, 5, 6, 7} {
+		numbers.append(value)
+	}
+	if got := numbers.valuesSlice(); len(got) != 6 || got[0] != 1 || got[5] != 6 {
+		t.Fatalf("values = %v, want first six operands", got)
+	}
+
+	numbers.reset()
+	numbers.append(42)
+	if got := numbers.valuesSlice(); len(got) != 1 || got[0] != 42 {
+		t.Fatalf("values after reset = %v, want [42]", got)
+	}
+}
+
+func TestGraphicsStateSaveRestoreReusesValueStack(t *testing.T) {
+	p := newTestParser()
+	p.syntax = newStreamParser(nil)
+	p.curStates.MutableGraphState().SetLineWidth(3)
+
+	allocs := testing.AllocsPerRun(100, func() {
+		for range 8 {
+			p.handleSaveGraphState()
+			p.curStates.MutableGraphState().SetLineWidth(9)
+		}
+		for range 8 {
+			p.handleRestoreGraphState()
+		}
+	})
+
+	if allocs != 0 {
+		t.Fatalf("save/restore allocations = %v, want 0 after stack warm-up", allocs)
+	}
+	if got := p.curStates.MutableGraphState().GetLineWidth(); got != 3 {
+		t.Fatalf("restored line width = %v, want 3", got)
+	}
+}
+
 // --- Param ring wrap-around (cpdf_streamcontentparser.cpp:433) ---
 
 func TestParamRingWrapDropsOldest(t *testing.T) {

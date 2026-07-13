@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
 	docpage "github.com/ivanvanderbyl/docmill/v2/pkg/page"
@@ -92,17 +93,41 @@ func (d *Document) WritePDF(ctx context.Context, w io.Writer) error {
 type Page struct {
 	doc   *document.Document
 	index int
+
+	loadOnce sync.Once
+	page     *pdfpage.Page
+	size     geom.Size
+	loadErr  error
+
+	textOnce sync.Once
+	text     *pdftext.TextPage
+	textErr  error
 }
 
 // load resolves the page dict and builds the native page interpreter result.
 func (p *Page) load() (*pdfpage.Page, geom.Size, error) {
-	dict := p.doc.GetPageDict(p.index)
-	if dict == nil {
-		return nil, geom.Size{}, fmt.Errorf("native pkg/parser: page %d dictionary not found", p.index)
-	}
-	pg := pdfpage.LoadPage(dict, p.doc)
-	size := geom.Size{Width: float64(pg.Width()), Height: float64(pg.Height())}
-	return pg, size, nil
+	p.loadOnce.Do(func() {
+		dict := p.doc.GetPageDict(p.index)
+		if dict == nil {
+			p.loadErr = fmt.Errorf("native pkg/parser: page %d dictionary not found", p.index)
+			return
+		}
+		p.page = pdfpage.LoadPage(dict, p.doc)
+		p.size = geom.Size{Width: float64(p.page.Width()), Height: float64(p.page.Height())}
+	})
+	return p.page, p.size, p.loadErr
+}
+
+func (p *Page) textPage() (*pdftext.TextPage, geom.Size, error) {
+	p.textOnce.Do(func() {
+		pg, _, err := p.load()
+		if err != nil {
+			p.textErr = err
+			return
+		}
+		p.text = pdftext.New(pg, false)
+	})
+	return p.text, p.size, p.textErr
 }
 
 // Size returns the page dimensions in points.
@@ -123,22 +148,26 @@ func (p *Page) TextCells(ctx context.Context) ([]docpage.TextCell, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	pg, size, err := p.load()
+	tp, size, err := p.textPage()
 	if err != nil {
 		return nil, err
 	}
-	tp := pdftext.New(pg, false)
 
 	rects := tp.GetRectArray()
+	rectBoxes := make([]crt.FloatRect, len(rects))
+	for i, r := range rects {
+		rectBoxes[i] = r.Box
+	}
+	rectTexts := tp.GetTextByRects(rectBoxes)
 	textRects := make([]docpdf.TextRect, 0, len(rects))
-	for _, r := range rects {
+	for i, r := range rects {
 		// Re-extract each rect's text via the bounded-text path rather than using
 		// the raw GetRectArray text: the rect text omits generated/degenerate
 		// chars (so inter-word spaces are absent once spaces carry PDFium's zero
 		// box), whereas GetTextByRect reinserts them — matching PDFium, which
 		// fills rect text from FPDFText_GetBoundedText.
 		textRects = append(textRects, docpdf.TextRect{
-			Text:       tp.GetTextByRect(r.Box),
+			Text:       rectTexts[i],
 			Left:       float64(r.Box.Left),
 			Top:        float64(r.Box.Top),
 			Right:      float64(r.Box.Right),
@@ -167,11 +196,10 @@ func (p *Page) WordTextCells(ctx context.Context) ([]docpage.TextCell, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	pg, size, err := p.load()
+	tp, size, err := p.textPage()
 	if err != nil {
 		return nil, err
 	}
-	tp := pdftext.New(pg, false)
 	return textRectsToCells(tp.GetWordArray(), size.Height), nil
 }
 
@@ -282,11 +310,10 @@ func textRectsToCells(rects []pdftext.Rect, pageHeight float64) []docpage.TextCe
 
 // TextInRect returns the text whose glyphs fall within box.
 func (p *Page) TextInRect(ctx context.Context, box geom.Box) (string, error) {
-	pg, size, err := p.load()
+	tp, size, err := p.textPage()
 	if err != nil {
 		return "", err
 	}
-	tp := pdftext.New(pg, false)
 	bounds := docpdf.TopLeftBoxToPDFiumBounds(box, size.Height)
 	return tp.GetTextByRect(crt.NewFloatRect(
 		float32(bounds.Left), float32(bounds.Bottom),

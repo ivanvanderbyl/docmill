@@ -4,6 +4,7 @@
 package text
 
 import (
+	"math"
 	"unicode"
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
@@ -1061,6 +1062,118 @@ func (tp *TextPage) GetTextByRect(box crt.FloatRect) string {
 	return tp.getTextByPredicate(func(ci charInfo) bool {
 		return isRectIntersect(box, ci.charBox)
 	})
+}
+
+// GetTextByRects returns the same text as calling GetTextByRect for every box,
+// but indexes the boxes into vertical bands and visits each selected character
+// only for boxes that can overlap it. Dense pages otherwise scan the complete
+// character stream once per text object rectangle.
+func (tp *TextPage) GetTextByRects(boxes []crt.FloatRect) []string {
+	texts := make([]string, len(boxes))
+	if len(boxes) == 0 || len(tp.charList) == 0 {
+		return texts
+	}
+
+	const bandHeight = float32(32)
+	bands := make(map[int][]int)
+	var fallback []int
+	for index, box := range boxes {
+		lo, hi, ok := verticalBands(box, bandHeight)
+		if !ok || hi-lo > 4096 {
+			fallback = append(fallback, index)
+			continue
+		}
+		for band := lo; band <= hi; band++ {
+			bands[band] = append(bands[band], index)
+		}
+	}
+
+	selected := make([][]int, len(boxes))
+	seen := make([]int, len(boxes))
+	generation := 0
+	for charIndex, ci := range tp.charList {
+		generation++
+		candidates := fallback
+		lo, hi, ok := verticalBands(ci.charBox, bandHeight)
+		if !ok || hi-lo > 4096 {
+			candidates = make([]int, len(boxes))
+			for index := range boxes {
+				candidates[index] = index
+			}
+		} else {
+			for band := lo; band <= hi; band++ {
+				candidates = append(candidates, bands[band]...)
+			}
+		}
+		for _, boxIndex := range candidates {
+			if seen[boxIndex] == generation {
+				continue
+			}
+			seen[boxIndex] = generation
+			if isRectIntersect(boxes[boxIndex], ci.charBox) {
+				selected[boxIndex] = append(selected[boxIndex], charIndex)
+			}
+		}
+	}
+
+	nonSpacePrefix := make([]int, len(tp.charList)+1)
+	for index, ci := range tp.charList {
+		nonSpacePrefix[index+1] = nonSpacePrefix[index]
+		if ci.unicode != ' ' {
+			nonSpacePrefix[index+1]++
+		}
+	}
+	for index, indices := range selected {
+		texts[index] = tp.textFromSelectedIndices(indices, nonSpacePrefix)
+	}
+	return texts
+}
+
+func verticalBands(box crt.FloatRect, height float32) (int, int, bool) {
+	box.Normalize()
+	if math.IsNaN(float64(box.Bottom)) || math.IsNaN(float64(box.Top)) ||
+		math.IsInf(float64(box.Bottom), 0) || math.IsInf(float64(box.Top), 0) {
+		return 0, 0, false
+	}
+	return int(math.Floor(float64(box.Bottom / height))),
+		int(math.Floor(float64(box.Top / height))), true
+}
+
+func (tp *TextPage) textFromSelectedIndices(indices, nonSpacePrefix []int) string {
+	if len(indices) == 0 {
+		return ""
+	}
+	posy := float32(0)
+	var text []rune
+	previous := -1
+	for _, index := range indices {
+		isContainPreChar := previous >= 0 && index == previous+1
+		isAddLineFeed := false
+		if previous < 0 {
+			isAddLineFeed = nonSpacePrefix[index] > 0
+		} else if index > previous+1 {
+			gapStart := previous + 1
+			if tp.charList[gapStart].unicode == ' ' {
+				text = append(text, ' ')
+				isAddLineFeed = nonSpacePrefix[index]-nonSpacePrefix[gapStart+1] > 0
+			} else {
+				isAddLineFeed = true
+			}
+		}
+
+		ci := tp.charList[index]
+		if absf(posy-ci.origin.Y) > 0 && !isContainPreChar && isAddLineFeed {
+			posy = ci.origin.Y
+			if len(text) != 0 {
+				text = append(text, '\r', '\n')
+			}
+		}
+		if ci.unicode != 0 {
+			text = append(text, ci.unicode)
+		}
+		previous = index
+	}
+	return string(text)
 }
 
 // getTextByPredicate ports GetTextByPredicate (523).

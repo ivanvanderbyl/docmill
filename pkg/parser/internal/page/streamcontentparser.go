@@ -70,7 +70,7 @@ type StreamContentParser struct {
 	contentMarksStack [][]ContentMark // index 0 is the sentinel, never popped
 	clipTextList      []*TextObject
 
-	stateStack []*AllStates
+	stateStack []AllStates
 	allCTMs    map[int32]crt.Matrix
 
 	streamStartOffsets []uint32
@@ -161,7 +161,7 @@ func (p *StreamContentParser) addNameParam(name []byte) {
 }
 
 func (p *StreamContentParser) addNumberParam(str []byte) {
-	p.paramBuf[p.getNextParamPos()] = contentParam{kind: paramNumber, num: crt.NumberFromString(string(str))}
+	p.paramBuf[p.getNextParamPos()] = contentParam{kind: paramNumber, num: crt.NumberFromBytes(str)}
 }
 
 func (p *StreamContentParser) addObjectParam(obj objects.Object) {
@@ -292,7 +292,6 @@ func (p *StreamContentParser) Parse(data []byte, startOffset, maxCost uint32, st
 		p.recursionState.parsed[stream] = struct{}{}
 		defer delete(p.recursionState.parsed, stream)
 	}
-
 	initObjCount := p.objectHolder.PageObjectCount()
 	p.syntax = newStreamParser(dataStart)
 	defer func() { p.syntax = nil }()
@@ -642,15 +641,16 @@ func (p *StreamContentParser) setGraphicStates(obj *TextObject) {
 // --- graphics state operators ---
 
 func (p *StreamContentParser) handleSaveGraphState() {
-	p.stateStack = append(p.stateStack, p.curStates.clone())
+	p.stateStack = append(p.stateStack, *p.curStates)
 }
 
 func (p *StreamContentParser) handleRestoreGraphState() {
 	if len(p.stateStack) == 0 {
 		return
 	}
-	p.curStates = p.stateStack[len(p.stateStack)-1]
-	p.stateStack = p.stateStack[:len(p.stateStack)-1]
+	last := len(p.stateStack) - 1
+	*p.curStates = p.stateStack[last]
+	p.stateStack = p.stateStack[:last]
 	p.allCTMs[p.getCurrentStreamIndex()] = p.curStates.CTM()
 }
 
@@ -764,6 +764,23 @@ func (p *StreamContentParser) handleBeginImage() {
 
 // --- path: m + ParsePathObject ---
 
+type pathNumberBuffer struct {
+	values [6]float32
+	count  int
+}
+
+func (b *pathNumberBuffer) append(value float32) {
+	if b.count >= len(b.values) {
+		return
+	}
+	b.values[b.count] = value
+	b.count++
+}
+
+func (b *pathNumberBuffer) reset() { b.count = 0 }
+
+func (b *pathNumberBuffer) valuesSlice() []float32 { return b.values[:b.count] }
+
 // handleMoveTo ports Handle_MoveTo: only valid with 2 params; then greedily
 // consume the path run via parsePathObject so the tokenizer position is exact.
 func (p *StreamContentParser) handleMoveTo() {
@@ -779,7 +796,6 @@ func (p *StreamContentParser) handleMoveTo() {
 // operator. The native Markdown pipeline only needs ruling geometry, so this
 // materialises straight line segments from m/l/h/re and tracks curve endpoints.
 func (p *StreamContentParser) parsePathObject() {
-	nParams := 0
 	lastPos := p.syntax.GetPos()
 	matrix := p.curStates.CTM().Multiply(p.mtContentToUser)
 	transform := func(point crt.PointF) crt.PointF {
@@ -788,7 +804,7 @@ func (p *StreamContentParser) parsePathObject() {
 	current := transform(p.getPoint(0))
 	subpathStart := current
 	var segments []PathSegment
-	var numbers []float32
+	var numbers pathNumberBuffer
 	appendObject := func() {
 		if len(segments) == 0 {
 			return
@@ -811,56 +827,50 @@ func (p *StreamContentParser) parsePathObject() {
 			return
 		case ElemKeyword:
 			word := p.syntax.GetWord()
+			values := numbers.valuesSlice()
 			if len(word) == 1 {
 				switch word[0] {
 				case 'm':
-					if len(numbers) >= 2 {
-						current = pointFromNumbers(numbers)
+					if len(values) >= 2 {
+						current = pointFromNumbers(values)
 						subpathStart = current
 					}
-					numbers = nil
-					nParams = 0
+					numbers.reset()
 				case 'l':
-					if len(numbers) >= 2 {
-						next := pointFromNumbers(numbers)
+					if len(values) >= 2 {
+						next := pointFromNumbers(values)
 						segments = append(segments, PathSegment{From: current, To: next})
 						current = next
 					}
-					numbers = nil
-					nParams = 0
+					numbers.reset()
 				case 'c':
-					if len(numbers) >= 6 {
-						current = pointFromNumbers(numbers)
+					if len(values) >= 6 {
+						current = pointFromNumbers(values)
 					}
-					numbers = nil
-					nParams = 0
+					numbers.reset()
 				case 'v':
-					if len(numbers) >= 4 {
-						current = pointFromNumbers(numbers)
+					if len(values) >= 4 {
+						current = pointFromNumbers(values)
 					}
-					numbers = nil
-					nParams = 0
+					numbers.reset()
 				case 'y':
-					if len(numbers) >= 4 {
-						current = pointFromNumbers(numbers)
+					if len(values) >= 4 {
+						current = pointFromNumbers(values)
 					}
-					numbers = nil
-					nParams = 0
+					numbers.reset()
 				case 'h':
 					segments = append(segments, PathSegment{From: current, To: subpathStart})
 					current = subpathStart
-					numbers = nil
-					nParams = 0
+					numbers.reset()
 				case 'W':
-					numbers = nil
-					nParams = 0
+					numbers.reset()
 				default:
 					bProcessed = false
 				}
 			} else if len(word) == 2 {
 				if word[0] == 'r' && word[1] == 'e' {
-					if len(numbers) >= 4 {
-						x, y, width, height := numbers[0], numbers[1], numbers[2], numbers[3]
+					if len(values) >= 4 {
+						x, y, width, height := values[0], values[1], values[2], values[3]
 						p1 := transform(crt.PointF{X: x, Y: y})
 						p2 := transform(crt.PointF{X: x + width, Y: y})
 						p3 := transform(crt.PointF{X: x + width, Y: y + height})
@@ -874,11 +884,9 @@ func (p *StreamContentParser) parsePathObject() {
 						current = p1
 						subpathStart = p1
 					}
-					numbers = nil
-					nParams = 0
+					numbers.reset()
 				} else if word[0] == 'W' && word[1] == '*' {
-					numbers = nil
-					nParams = 0
+					numbers.reset()
 				} else {
 					bProcessed = false
 				}
@@ -892,11 +900,10 @@ func (p *StreamContentParser) parsePathObject() {
 				lastPos = p.syntax.GetPos()
 			}
 		case ElemNumber:
-			if nParams == 6 {
+			if numbers.count == len(numbers.values) {
 				break
 			}
-			numbers = append(numbers, crt.NumberFromString(string(p.syntax.GetWord())).GetFloat())
-			nParams++
+			numbers.append(crt.NumberFromBytes(p.syntax.GetWord()).GetFloat())
 		default:
 			bProcessed = false
 		}
