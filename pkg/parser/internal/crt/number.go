@@ -9,9 +9,11 @@
 package crt
 
 import (
+	"bytes"
 	"math"
 	"strconv"
 	"strings"
+	"unsafe"
 )
 
 type numberKind uint8
@@ -113,6 +115,69 @@ func NumberFromString(s string) Number {
 		} else {
 			value = int32Min
 		}
+	}
+	return Number{kind: numberSigned, i: value}
+}
+
+// NumberFromBytes parses a content-stream numeric token without copying the
+// tokenizer's reusable byte buffer. Valid decimal tokens take a single
+// validation pass; malformed tokens fall back to NumberFromString semantics.
+func NumberFromBytes(s []byte) Number {
+	if len(s) == 0 {
+		return Number{kind: numberUnsigned, u: 0}
+	}
+
+	if bytes.IndexByte(s, '.') >= 0 {
+		view := unsafe.String(unsafe.SliceData(s), len(s))
+		value, err := strconv.ParseFloat(view, 32)
+		if err != nil {
+			if numErr, ok := err.(*strconv.NumError); ok && numErr.Err == strconv.ErrRange {
+				return Number{kind: numberFloat, f: float32(value)}
+			}
+			return Number{kind: numberFloat, f: StringToFloat32(view)}
+		}
+		return Number{kind: numberFloat, f: float32(value)}
+	}
+
+	var acc uint64
+	overflow := false
+	signed := false
+	negative := false
+	cc := 0
+	switch s[0] {
+	case '+':
+		signed = true
+		cc++
+	case '-':
+		signed = true
+		negative = true
+		cc++
+	}
+	for ; cc < len(s) && isDecimalDigit(s[cc]); cc++ {
+		if !overflow {
+			acc = acc*10 + uint64(s[cc]-'0')
+			if acc > math.MaxUint32 {
+				overflow = true
+			}
+		}
+	}
+	var uValue uint32
+	if !overflow {
+		uValue = uint32(acc)
+	}
+	if !signed {
+		return Number{kind: numberUnsigned, u: uValue}
+	}
+	limit := uint32(math.MaxInt32)
+	if negative {
+		limit++
+	}
+	if uValue > limit {
+		uValue = 0
+	}
+	value := int32(uValue)
+	if negative && value != int32Min {
+		value = -value
 	}
 	return Number{kind: numberSigned, i: value}
 }

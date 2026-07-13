@@ -266,3 +266,36 @@ func TestGetTextByRect(t *testing.T) {
 		t.Errorf("GetTextByRect=%q want A", got)
 	}
 }
+
+func TestGetTextByRectsMatchesScalarExtraction(t *testing.T) {
+	t1 := &page.TextObject{}
+	t2 := &page.TextObject{}
+	chars := []charInfo{
+		normalChar(t1, box(0, 64, 10, 76), 'A'),
+		normalChar(t1, box(0, 0, 0, 0), ' '),
+		normalChar(t1, box(12, 64, 22, 76), 'B'),
+		normalChar(t2, box(100, 20, 110, 32), 'X'),
+		normalChar(t2, box(0, 20, 10, 32), 'C'),
+	}
+	chars[0].origin.Y = 70
+	chars[2].origin.Y = 70
+	chars[3].origin.Y = 26
+	chars[4].origin.Y = 26
+	tp := tpWith(chars)
+	rects := []crt.FloatRect{
+		box(-1, 63, 23, 77),
+		box(-1, 19, 111, 33),
+		box(-1, 19, 11, 77),
+		box(500, 500, 510, 510),
+	}
+
+	got := tp.GetTextByRects(rects)
+	if len(got) != len(rects) {
+		t.Fatalf("GetTextByRects returned %d results, want %d", len(got), len(rects))
+	}
+	for i, rect := range rects {
+		if want := tp.GetTextByRect(rect); got[i] != want {
+			t.Errorf("GetTextByRects[%d]=%q want scalar %q", i, got[i], want)
+		}
+	}
+}

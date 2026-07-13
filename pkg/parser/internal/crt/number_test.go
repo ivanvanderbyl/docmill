@@ -130,3 +130,16 @@ func TestNumberFromStringFloat(t *testing.T) {
 		t.Errorf("GetFloat = %v, want 3.24", got)
 	}
 }
+
+func TestNumberFromBytesMatchesStringParser(t *testing.T) {
+	inputs := []string{
+		"", "0", "123", "+123", "-123", "4294967295", "4294967296",
+		"3.24", ".5", "-.5", "1.", "1.2.3", "+", "-", ".", "--1",
+		"1e3", "1.25e-2", " 2.5", "nan",
+	}
+	for _, input := range inputs {
+		if got, want := NumberFromBytes([]byte(input)), NumberFromString(input); got != want {
+			t.Errorf("NumberFromBytes(%q) = %+v, want %+v", input, got, want)
+		}
+	}
+}
