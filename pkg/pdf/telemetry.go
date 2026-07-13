@@ -2,6 +2,7 @@ package pdf
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -64,4 +65,35 @@ func init() {
 func recordStage(ctx context.Context, stage string, start time.Time) {
 	stageDuration.Record(ctx, time.Since(start).Seconds(),
 		metric.WithAttributes(attribute.String("stage", stage)))
+}
+
+// startStage starts a fixed-name child span and returns a completion function
+// that records both the stage duration metric and any error. Callers finish the
+// stage immediately after the measured work so docmill.page self-time remains
+// useful when diagnosing slow pages.
+func startStage(ctx context.Context, stage string) (context.Context, func(error)) {
+	start := time.Now()
+	stageCtx, span := tracer.Start(ctx, "pipeline."+stage)
+	return stageCtx, func(err error) {
+		if err != nil {
+			span.RecordError(err)
+		}
+		recordStage(stageCtx, stage, start)
+		span.End()
+	}
+}
+
+// runStage instruments a stage that returns one value and an error. It ends
+// the span on every exit path, including panics, while preserving the panic for
+// extractPageBlocksSafe to convert into an extraction error.
+func runStage[T any](ctx context.Context, stage string, fn func(context.Context) (T, error)) (result T, err error) {
+	stageCtx, finish := startStage(ctx, stage)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			finish(fmt.Errorf("panic: %v", recovered))
+			panic(recovered)
+		}
+		finish(err)
+	}()
+	return fn(stageCtx)
 }
