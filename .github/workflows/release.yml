@@ -1,0 +1,95 @@
+name: release
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out merge commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Calculate release
+        id: version
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+
+          existing_tag="$({
+            git tag --points-at "$MERGE_SHA" --list 'v*' |
+              grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || true
+          } | sort -V | tail -n 1)"
+
+          if [[ -n "$existing_tag" ]]; then
+            next_tag="$existing_tag"
+            previous_tag="$(
+              git tag --merged "$MERGE_SHA^" --list 'v*' |
+                grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' |
+                sort -V | tail -n 1
+            )"
+            create_tag=false
+          else
+            previous_tag="$(
+              git tag --merged "$MERGE_SHA" --list 'v*' |
+                grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' |
+                sort -V | tail -n 1
+            )"
+            if [[ -z "$previous_tag" ]]; then
+              echo "No stable vMAJOR.MINOR.PATCH tag is an ancestor of $MERGE_SHA" >&2
+              exit 1
+            fi
+            next_tag="$(go run ./internal/releaseversion/cmd -current "$previous_tag" -labels "$LABELS")"
+            create_tag=true
+          fi
+
+          echo "previous_tag=$previous_tag" >> "$GITHUB_OUTPUT"
+          echo "next_tag=$next_tag" >> "$GITHUB_OUTPUT"
+          echo "create_tag=$create_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Tag merge commit
+        if: steps.version.outputs.create_tag == 'true'
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          NEXT_TAG: ${{ steps.version.outputs.next_tag }}
+        run: |
+          git tag "$NEXT_TAG" "$MERGE_SHA"
+          git push origin "refs/tags/$NEXT_TAG"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXT_TAG: ${{ steps.version.outputs.next_tag }}
+          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+        run: |
+          if gh release view "$NEXT_TAG" >/dev/null 2>&1; then
+            echo "Release $NEXT_TAG already exists"
+            exit 0
+          fi
+          gh release create "$NEXT_TAG" \
+            --verify-tag \
+            --title "$NEXT_TAG" \
+            --generate-notes \
+            --notes-start-tag "$PREVIOUS_TAG"
