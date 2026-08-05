@@ -197,6 +197,10 @@ func DetectTextTables(cells []page.TextCell, options DetectionOptions) Detection
 	// dominant borderless false positive on diverse corpora.
 	tables = dropMultiColumnProseTables(tables, tableCellIndexes)
 
+	// Suppress equation/prose grids whose column boundaries are not persistent
+	// whitespace gutters (see the gutter-persistence invariant above).
+	tables = dropGutterCrossingTables(tables, tableCellIndexes, options.RowTolerance)
+
 	remaining := make([]page.TextCell, 0, len(cells))
 	for _, cell := range cells {
 		if !tableCellIndexes[cell.Index] {
@@ -231,6 +235,315 @@ func dropMultiColumnProseTables(tables []DetectedTable, claimed map[int]bool) []
 		kept = append(kept, detected)
 	}
 	return kept
+}
+
+// Gutter-persistence gate. The invariant: a real table's columns are separated
+// by whitespace corridors that persist down the ENTIRE table — text runs sit
+// inside their column, so (almost) no source run straddles an interior column
+// boundary. Display mathematics and body prose that merely happen to align on
+// one anchor line violate this: subsequent lines flow straight across the
+// imaginary boundaries (a prose line is one full-width run; a second equation
+// line's fragments drift across the anchor's gaps). Legitimate exceptions —
+// merged multi-column headers and full-width section rows — are a small
+// minority of lines, so the gate fires only when crossings are frequent:
+// at least half the lines contain a crossing run, or a single boundary is
+// crossed on at least 40% of lines. Both signals are pure geometry.
+const (
+	// gutterCrossMinTolerance ignores glyph bleed across a boundary (points on
+	// each side); scaled up for large type via gutterCrossToleranceHeightRatio.
+	gutterCrossMinTolerance         = 2.0
+	gutterCrossToleranceHeightRatio = 0.25
+	// gutterMinCrossingLines is the absolute floor before the gate may fire, so
+	// one stray line can never suppress a small table.
+	gutterMinCrossingLines = 2
+	// gutterCrossingLineFraction: suppress when this share of lines contains a
+	// boundary-crossing run.
+	gutterCrossingLineFraction = 0.5
+	// gutterBoundaryCrossFraction: suppress when one boundary is crossed on
+	// this share of lines (a corridor that plainly is not whitespace).
+	gutterBoundaryCrossFraction = 0.4
+	// gutterMinDegenerateGutters: suppress when at least this many gutters have
+	// (nearly) no width AND they make up at least half the gutters.
+	gutterMinDegenerateGutters = 2
+)
+
+// dropGutterCrossingTables removes detected borderless tables whose interior
+// column boundaries are not persistent whitespace gutters (see the invariant
+// above) and releases their cells back to the text flow. Applied by both the
+// borderless cascade and the anchored detector; ruled tables never pass
+// through it (their boundaries are real ink).
+func dropGutterCrossingTables(tables []DetectedTable, claimed map[int]bool, rowTolerance float64) []DetectedTable {
+	kept := make([]DetectedTable, 0, len(tables))
+	for _, detected := range tables {
+		if tableViolatesGutterPersistence(detected, rowTolerance) {
+			for _, cell := range detected.TextCells {
+				delete(claimed, cell.Index)
+			}
+			continue
+		}
+		kept = append(kept, detected)
+	}
+	return kept
+}
+
+// dropGutterCrossingTablesWhere is dropGutterCrossingTables restricted to the
+// tables flagged as line-built; word-token grids pass through unjudged. When a
+// line-built table offers no line-level column evidence (its lines are merged
+// runs), the invariant is re-judged on the word tokens inside its box — the
+// finest granularity at which gutters are observable.
+func dropGutterCrossingTablesWhere(tables []DetectedTable, lineBuilt []bool, tokenCells []page.TextCell, claimed map[int]bool, options DetectionOptions) []DetectedTable {
+	kept := make([]DetectedTable, 0, len(tables))
+	for index, detected := range tables {
+		if index < len(lineBuilt) && lineBuilt[index] && tableViolatesGutterPersistenceWithTokens(detected, tokenCells, options) {
+			for _, cell := range detected.TextCells {
+				delete(claimed, cell.Index)
+			}
+			continue
+		}
+		kept = append(kept, detected)
+	}
+	return kept
+}
+
+// tableViolatesGutterPersistenceWithTokens judges the table on its own source
+// cells first; if those lines cannot express the columns (merged runs), it
+// re-judges on the word tokens inside the table box.
+func tableViolatesGutterPersistenceWithTokens(detected DetectedTable, tokenCells []page.TextCell, options DetectionOptions) bool {
+	if tableViolatesGutterPersistence(detected, options.RowTolerance) {
+		return true
+	}
+	if len(tokenCells) == 0 || tableHasLineColumnEvidence(detected, options.RowTolerance) {
+		return false
+	}
+	tokens := containedTextCells(tokenCells, detected.Box, options.TextOverlapThreshold)
+	if len(tokens) == 0 {
+		return false
+	}
+	tokenView := detected
+	tokenView.TextCells = tokens
+	return tableViolatesGutterPersistence(tokenView, options.RowTolerance)
+}
+
+// tableHasLineColumnEvidence reports whether some source line carries one cell
+// per detected column (the precondition under which the line-level judgment is
+// meaningful).
+func tableHasLineColumnEvidence(detected DetectedTable, rowTolerance float64) bool {
+	for _, row := range groupTextRows(detected.TextCells, rowTolerance) {
+		if len(row.Cells) >= detected.Data.NumCols {
+			return true
+		}
+	}
+	return false
+}
+
+// tableViolatesGutterPersistence tests the invariant on a detected table's
+// SOURCE lines. Each column's core is its robust content extent: source cells
+// are grouped per (line, nearest detected column), each group enclosed, and
+// the core is the median left/right edge of those per-line groups (a median
+// resists one wide merged-header or section line). Two failure shapes fire the
+// gate:
+//
+//   - crossing runs: a run overlapping two (or more) cores covers the
+//     whitespace the grid claims is a boundary — prose flowing straight across
+//     the imaginary columns. Counted per line and per boundary.
+//   - degenerate gutters: adjacent cores that (nearly) touch mean the columns'
+//     content interpenetrates row to row — mathematics whose fragment gaps
+//     drift so no corridor survives.
+func tableViolatesGutterPersistence(detected DetectedTable, rowTolerance float64) bool {
+	if detected.Data.NumCols < 2 {
+		return false
+	}
+	rows := groupTextRows(detected.TextCells, rowTolerance)
+	if len(rows) < 2 {
+		return false
+	}
+
+	// The gate judges LINE-level gutters, so it needs line-level column
+	// evidence: some source line must carry one cell per column (the line the
+	// borderless detectors derived the columns from). A grid recovered from
+	// word tokens inside merged line runs (every line a single run) offers no
+	// such evidence — its full-width runs are legitimate, not prose flowing
+	// across gutters — so it is not judged here.
+	maxCellsPerRow := 0
+	for _, row := range rows {
+		if len(row.Cells) > maxCellsPerRow {
+			maxCellsPerRow = len(row.Cells)
+		}
+	}
+	if maxCellsPerRow < detected.Data.NumCols {
+		return false
+	}
+
+	cores := tableColumnContentCores(detected.Data, rows)
+	if len(cores) < 2 {
+		return false
+	}
+
+	tolerance := math.Max(gutterCrossMinTolerance, gutterCrossToleranceHeightRatio*modalTextCellHeight(detected.TextCells))
+
+	degenerate := 0
+	for index := 0; index+1 < len(cores); index++ {
+		if cores[index+1].L-cores[index].R < tolerance {
+			degenerate++
+		}
+	}
+	if degenerate >= gutterMinDegenerateGutters && degenerate*2 >= len(cores)-1 {
+		return true
+	}
+
+	crossingLines := 0
+	perBoundary := make([]int, len(cores)-1)
+	for _, row := range rows {
+		lineCrosses := false
+		for _, cell := range row.Cells {
+			for boundary := 0; boundary+1 < len(cores); boundary++ {
+				// The cell's ink covers the middle of the claimed gutter (with
+				// a margin capped at half the corridor so narrow corridors are
+				// still judged). A cell merely overhanging its own column stops
+				// short of the corridor middle and does not count.
+				middle := (cores[boundary].R + cores[boundary+1].L) / 2
+				margin := math.Max(0, math.Min(tolerance, (cores[boundary+1].L-cores[boundary].R)/2))
+				if cell.Box.L < middle-margin && cell.Box.R > middle+margin {
+					perBoundary[boundary]++
+					lineCrosses = true
+				}
+			}
+		}
+		if lineCrosses {
+			crossingLines++
+		}
+	}
+
+	lineCount := float64(len(rows))
+	if crossingLines >= gutterMinCrossingLines && float64(crossingLines) >= gutterCrossingLineFraction*lineCount {
+		return true
+	}
+	for _, count := range perBoundary {
+		if count >= gutterMinCrossingLines && float64(count) >= gutterBoundaryCrossFraction*lineCount {
+			return true
+		}
+	}
+	return false
+}
+
+// tableColumnContentCores computes each detected column's robust content
+// extent from the source lines. Cells are assigned to the nearest column
+// centre (recovered from the grid's single-span cell boxes), grouped per line,
+// and each column's core is the median left/right edge of its per-line group
+// boxes. Columns with no assigned content are skipped; the returned cores are
+// ordered left to right.
+func tableColumnContentCores(data Data, rows []textline.ParagraphTextLine) []geom.Box {
+	bands := tableColumnBands(data)
+	if len(bands) < 2 {
+		return nil
+	}
+
+	type group struct {
+		box geom.Box
+		set bool
+	}
+	lefts := make([][]float64, len(bands))
+	rights := make([][]float64, len(bands))
+	for _, row := range rows {
+		groups := make([]group, len(bands))
+		for _, cell := range row.Cells {
+			column := columnBandForCell(bands, cell.Box.CenterX())
+			if column < 0 {
+				continue
+			}
+			if !groups[column].set {
+				groups[column] = group{box: cell.Box, set: true}
+				continue
+			}
+			groups[column].box = geom.EnclosingBox(groups[column].box, cell.Box)
+		}
+		for column, g := range groups {
+			if !g.set {
+				continue
+			}
+			lefts[column] = append(lefts[column], g.box.L)
+			rights[column] = append(rights[column], g.box.R)
+		}
+	}
+
+	cores := make([]geom.Box, 0, len(bands))
+	for column := range bands {
+		if len(lefts[column]) == 0 {
+			continue
+		}
+		cores = append(cores, geom.Box{L: medianFloat64(lefts[column]), R: medianFloat64(rights[column])})
+	}
+	return cores
+}
+
+// tableColumnBands recovers each column's horizontal band from the grid's
+// single-span cell boxes (span cells straddle columns by design and are
+// excluded). Bands are returned left to right.
+func tableColumnBands(data Data) []geom.Box {
+	left := make(map[int]float64, data.NumCols)
+	right := make(map[int]float64, data.NumCols)
+	for _, cell := range data.Cells {
+		if cell.Box == nil || cell.EndCol-cell.StartCol != 1 {
+			continue
+		}
+		if existing, ok := left[cell.StartCol]; !ok || cell.Box.L < existing {
+			left[cell.StartCol] = cell.Box.L
+		}
+		if existing, ok := right[cell.StartCol]; !ok || cell.Box.R > existing {
+			right[cell.StartCol] = cell.Box.R
+		}
+	}
+	bands := make([]geom.Box, 0, data.NumCols)
+	for col := 0; col < data.NumCols; col++ {
+		l, okLeft := left[col]
+		r, okRight := right[col]
+		if !okLeft || !okRight {
+			continue
+		}
+		bands = append(bands, geom.Box{L: l, R: r})
+	}
+	return bands
+}
+
+// columnBandForCell assigns a cell to the band containing its centre; when no
+// band contains it (or several overlapping bands do), the band with the
+// nearest centre (among the containing ones, if any) wins.
+func columnBandForCell(bands []geom.Box, x float64) int {
+	best, bestDistance := -1, math.Inf(1)
+	containingBest, containingDistance := -1, math.Inf(1)
+	for index, band := range bands {
+		distance := math.Abs(x - (band.L+band.R)/2)
+		if distance < bestDistance {
+			best, bestDistance = index, distance
+		}
+		if x >= band.L && x <= band.R && distance < containingDistance {
+			containingBest, containingDistance = index, distance
+		}
+	}
+	if containingBest >= 0 {
+		return containingBest
+	}
+	return best
+}
+
+// modalTextCellHeight returns the most common rounded cell height, preferring
+// the larger height on ties. Used to scale the crossing tolerance with type
+// size.
+func modalTextCellHeight(cells []page.TextCell) float64 {
+	counts := make(map[int]int, len(cells))
+	for _, cell := range cells {
+		height := int(cell.Box.Height() + 0.5)
+		if height > 0 {
+			counts[height]++
+		}
+	}
+	best, bestCount := 0, 0
+	for height, count := range counts {
+		if count > bestCount || (count == bestCount && height > best) {
+			best, bestCount = height, count
+		}
+	}
+	return float64(best)
 }
 
 // dropProseSlabTables is the real-table-sparing variant of
@@ -487,8 +800,23 @@ func DetectAnchoredTextTables(lineCells, tokenCells []page.TextCell, options Det
 
 	rows := groupTextRows(lineCells, options.RowTolerance)
 	tables := make([]DetectedTable, 0)
+	// lineBuilt marks, per detected table, whether its grid was derived from
+	// LINE-cell structure (the gutter-persistence gate only judges those; a
+	// word-token grid's merged line runs are legitimate, not prose crossing
+	// gutters).
+	lineBuilt := make([]bool, 0)
 	tableCellIndexes := make(map[int]bool)
 	minAnchorCols := anchoredMinCols(options)
+
+	appendTables := func(detected []DetectedTable, isLineBuilt bool) {
+		for _, table := range detected {
+			tables = append(tables, table)
+			lineBuilt = append(lineBuilt, isLineBuilt)
+			for _, cell := range table.TextCells {
+				tableCellIndexes[cell.Index] = true
+			}
+		}
+	}
 
 	for index := 0; index < len(rows); {
 		if len(rows[index].Cells) < minAnchorCols {
@@ -508,6 +836,7 @@ func DetectAnchoredTextTables(lineCells, tokenCells []page.TextCell, options Det
 
 		if detected, ok := buildAnchoredDetectedTable(rows[start:end], tokenCells, minAnchorCols, options); ok {
 			tables = append(tables, detected)
+			lineBuilt = append(lineBuilt, false)
 			for _, row := range rows[start:end] {
 				for _, cell := range row.Cells {
 					tableCellIndexes[cell.Index] = true
@@ -520,68 +849,33 @@ func DetectAnchoredTextTables(lineCells, tokenCells []page.TextCell, options Det
 	}
 
 	if len(tables) == 0 {
-		for _, detected := range detectMultilineNumericContinuationTables(rows, options, tableCellIndexes) {
-			tables = append(tables, detected)
-			for _, cell := range detected.TextCells {
-				tableCellIndexes[cell.Index] = true
-			}
-		}
+		appendTables(detectMultilineNumericContinuationTables(rows, options, tableCellIndexes), true)
 	}
 
 	if len(tables) == 0 {
-		for _, detected := range detectWideMultilineTextTables(rows, options, tableCellIndexes) {
-			tables = append(tables, detected)
-			for _, cell := range detected.TextCells {
-				tableCellIndexes[cell.Index] = true
-			}
-		}
+		appendTables(detectWideMultilineTextTables(rows, options, tableCellIndexes), true)
 	}
 
 	if len(tables) == 0 {
-		for _, detected := range detectCaptionlessThreeColumnMultilineTextTables(rows, options, tableCellIndexes) {
-			tables = append(tables, detected)
-			for _, cell := range detected.TextCells {
-				tableCellIndexes[cell.Index] = true
-			}
-		}
+		appendTables(detectCaptionlessThreeColumnMultilineTextTables(rows, options, tableCellIndexes), true)
 	}
 
 	if len(tables) == 0 {
-		for _, detected := range detectMergedHeaderTextTables(rows, tokenCells, options, tableCellIndexes) {
-			tables = append(tables, detected)
-			for _, cell := range detected.TextCells {
-				tableCellIndexes[cell.Index] = true
-			}
-		}
+		appendTables(detectMergedHeaderTextTables(rows, tokenCells, options, tableCellIndexes), true)
 	}
 
-	for _, detected := range detectCompactWordGridTables(rows, tokenCells, options, tableCellIndexes) {
-		tables = append(tables, detected)
-		for _, cell := range detected.TextCells {
-			tableCellIndexes[cell.Index] = true
-		}
-	}
+	appendTables(detectCompactWordGridTables(rows, tokenCells, options, tableCellIndexes), false)
 
-	for _, detected := range detectShortCaptionedWordGridTables(rows, tokenCells, options, tableCellIndexes) {
-		tables = append(tables, detected)
-		for _, cell := range detected.TextCells {
-			tableCellIndexes[cell.Index] = true
-		}
-	}
+	appendTables(detectShortCaptionedWordGridTables(rows, tokenCells, options, tableCellIndexes), false)
 
-	for _, detected := range detectCaptionBeforeMultilineTables(rows, options, tableCellIndexes) {
-		tables = append(tables, detected)
-		for _, cell := range detected.TextCells {
-			tableCellIndexes[cell.Index] = true
-		}
-	}
+	appendTables(detectCaptionBeforeMultilineTables(rows, options, tableCellIndexes), true)
 
-	for _, detected := range detectLabelValueTextTables(rows, options, tableCellIndexes) {
-		tables = append(tables, detected)
-		for _, cell := range detected.TextCells {
-			tableCellIndexes[cell.Index] = true
-		}
-	}
+	appendTables(detectLabelValueTextTables(rows, options, tableCellIndexes), true)
+
+	// Suppress equation/prose grids whose column boundaries are not persistent
+	// whitespace gutters (see the gutter-persistence invariant above). Runs
+	// before dropProseSlabTables so the lineBuilt flags stay aligned with tables.
+	tables = dropGutterCrossingTablesWhere(tables, lineBuilt, tokenCells, tableCellIndexes, options)
 
 	// Suppress the dominant borderless false positive — multi-column page prose
 	// (a two-column bibliography or body text split into a fake grid) — on the

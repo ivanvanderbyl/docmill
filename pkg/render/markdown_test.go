@@ -133,3 +133,33 @@ func TestRenderTableReturnsEmptyForEmptyTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, got)
 }
+
+func TestRenderTableEmitsSpannedCellTextOnceAtAnchorSlot(t *testing.T) {
+	t.Parallel()
+
+	// A cell spanning several grid rows (or columns) must contribute its text
+	// exactly once, at its anchor (StartRow, StartCol). Markdown has no
+	// rowspan/colspan; repeating the text in every covered slot fabricates
+	// duplicate rows (the Table I duplication defect).
+	data := table.Data{
+		NumRows: 3,
+		NumCols: 3,
+		Cells: []table.Cell{
+			{Text: "Name", RowSpan: 1, ColSpan: 1, StartRow: 0, EndRow: 1, StartCol: 0, EndCol: 1},
+			{Text: "Merged Header", RowSpan: 1, ColSpan: 2, StartRow: 0, EndRow: 1, StartCol: 1, EndCol: 3},
+			{Text: "Tall", RowSpan: 2, ColSpan: 1, StartRow: 1, EndRow: 3, StartCol: 0, EndCol: 1},
+			{Text: "b1", RowSpan: 1, ColSpan: 1, StartRow: 1, EndRow: 2, StartCol: 1, EndCol: 2},
+			{Text: "c1", RowSpan: 1, ColSpan: 1, StartRow: 1, EndRow: 2, StartCol: 2, EndCol: 3},
+			{Text: "b2", RowSpan: 1, ColSpan: 1, StartRow: 2, EndRow: 3, StartCol: 1, EndCol: 2},
+			{Text: "c2", RowSpan: 1, ColSpan: 1, StartRow: 2, EndRow: 3, StartCol: 2, EndCol: 3},
+		},
+	}
+
+	got, err := render.Table(data)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(got, "Tall"))
+	require.Equal(t, 1, strings.Count(got, "Merged Header"))
+	require.Contains(t, got, "b1")
+	require.Contains(t, got, "b2")
+}

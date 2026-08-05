@@ -7,6 +7,7 @@ package pdf
 import (
 	"context"
 	"fmt"
+	"math"
 	"runtime"
 	"runtime/debug"
 	"sort"
@@ -488,6 +489,10 @@ func pageMarkdownBlocks(ctx context.Context, cells []page.TextCell, wordCells []
 	_, detectSpan := tracer.Start(ctx, "pipeline.table_detect")
 	tableProtected := denseIndexLineCellIndexes(cells, size)
 	tableCells, protectedTableCells := splitCellsByIndexSet(cells, tableProtected)
+	// Keep marginal page numbers out of table detection entirely: a table or
+	// equation region reaching the page edge otherwise swallows the page number
+	// into a cell mid-content.
+	tableCells, marginalNumberCells := splitMarginalPageNumberCells(tableCells, size)
 	detected := doctable.DetectTables(tableCells, rulings, options.TableDetection)
 	remainingCells := detected.TextCells
 	tableOverlapThreshold := normalisedTableOverlapThreshold(options.TableDetection)
@@ -517,6 +522,7 @@ func pageMarkdownBlocks(ctx context.Context, cells []page.TextCell, wordCells []
 	}
 	detected.Tables = keptTables
 	remainingCells = append(remainingCells, protectedTableCells...)
+	remainingCells = append(remainingCells, marginalNumberCells...)
 	detectSpan.SetAttributes(attribute.Int("tables", len(detected.Tables)))
 	detectSpan.End()
 	recordStage(ctx, "table_detect", detectStart)
@@ -808,6 +814,45 @@ func normalisedTableOverlapThreshold(options doctable.DetectionOptions) float64 
 		return options.TextOverlapThreshold
 	}
 	return 0.3
+}
+
+// splitMarginalPageNumberCells removes standalone page-number cells sitting in
+// the page's top/bottom margin from the table-detection input, returning them
+// separately so they flow to the ordinary text path. A table, equation block,
+// or figure reaching the page edge otherwise swallows the page number into a
+// cell mid-content. The cell must be alone on its text line — a number inside
+// a footer sentence is the trailing-page-number split's job — and the position
+// test is pure geometry (the same margin band splitMarginalPageNumberBlocks
+// uses).
+func splitMarginalPageNumberCells(cells []page.TextCell, size geom.Size) ([]page.TextCell, []page.TextCell) {
+	const lineTolerance = 4.0
+	if size.Height <= 0 || len(cells) == 0 {
+		return cells, nil
+	}
+	remaining := make([]page.TextCell, 0, len(cells))
+	marginal := make([]page.TextCell, 0, 1)
+	for index, cell := range cells {
+		if !isStandalonePageNumber(strings.TrimSpace(cell.Text)) || !isMarginalBlock(markdownBlock{Box: cell.Box}, size) {
+			remaining = append(remaining, cell)
+			continue
+		}
+		aloneOnLine := true
+		for otherIndex, other := range cells {
+			if otherIndex == index {
+				continue
+			}
+			if math.Abs(other.Box.CenterY()-cell.Box.CenterY()) <= lineTolerance {
+				aloneOnLine = false
+				break
+			}
+		}
+		if !aloneOnLine {
+			remaining = append(remaining, cell)
+			continue
+		}
+		marginal = append(marginal, cell)
+	}
+	return remaining, marginal
 }
 
 func splitMarginalPageNumberBlocks(blocks []markdownBlock, size geom.Size) []markdownBlock {
