@@ -17,6 +17,15 @@ type MergeOptions struct {
 	// VerticalThresholdFactor groups cells onto the same row when their top and
 	// bottom edges are within this factor times the row height (default 0.5).
 	VerticalThresholdFactor float64
+	// ExclusiveReextract marks reextract as CONSUMING: every group — including
+	// single-cell groups — is re-read through it in processing order, an empty
+	// result is authoritative (that region's characters were already claimed by
+	// an earlier cell, so falling back to the member texts would duplicate
+	// them), and cells left with no text are dropped. Rect queries alone cannot
+	// give this guarantee: a glyph whose box straddles two regions (big-operator
+	// limits, sub/superscripts crossing line rects) is otherwise emitted into
+	// both.
+	ExclusiveReextract bool
 }
 
 func (o MergeOptions) withDefaults() MergeOptions {
@@ -49,7 +58,17 @@ func MergeFragmentedCells(cells []page.TextCell, reextract func(geom.Box) string
 
 	merged := make([]page.TextCell, 0, len(cells))
 	for _, row := range groupCellRows(cells, options.VerticalThresholdFactor) {
-		merged = append(merged, mergeCellRow(row, options.HorizontalThresholdFactor, reextract)...)
+		merged = append(merged, mergeCellRow(row, options.HorizontalThresholdFactor, reextract, options.ExclusiveReextract)...)
+	}
+	if options.ExclusiveReextract && reextract != nil {
+		kept := merged[:0]
+		for _, cell := range merged {
+			if strings.TrimSpace(cell.Text) == "" {
+				continue
+			}
+			kept = append(kept, cell)
+		}
+		merged = kept
 	}
 	for index := range merged {
 		merged[index].Index = index
@@ -81,7 +100,7 @@ func groupCellRows(cells []page.TextCell, verticalFactor float64) [][]page.TextC
 	return rows
 }
 
-func mergeCellRow(row []page.TextCell, horizontalFactor float64, reextract func(geom.Box) string) []page.TextCell {
+func mergeCellRow(row []page.TextCell, horizontalFactor float64, reextract func(geom.Box) string, exclusive bool) []page.TextCell {
 	merged := make([]page.TextCell, 0, len(row))
 	group := []page.TextCell{row[0]}
 
@@ -92,15 +111,20 @@ func mergeCellRow(row []page.TextCell, horizontalFactor float64, reextract func(
 			group = append(group, cell)
 			continue
 		}
-		merged = append(merged, mergeCellGroup(group, reextract))
+		merged = append(merged, mergeCellGroup(group, reextract, exclusive))
 		group = []page.TextCell{cell}
 	}
-	merged = append(merged, mergeCellGroup(group, reextract))
+	merged = append(merged, mergeCellGroup(group, reextract, exclusive))
 	return merged
 }
 
-func mergeCellGroup(group []page.TextCell, reextract func(geom.Box) string) page.TextCell {
+func mergeCellGroup(group []page.TextCell, reextract func(geom.Box) string, exclusive bool) page.TextCell {
 	if len(group) == 1 {
+		if exclusive && reextract != nil {
+			cell := group[0]
+			cell.Text = strings.TrimSpace(reextract(cell.Box))
+			return cell
+		}
 		return group[0]
 	}
 
@@ -131,7 +155,7 @@ func mergeCellGroup(group []page.TextCell, reextract func(geom.Box) string) page
 	if reextract != nil {
 		text = strings.TrimSpace(reextract(box))
 	}
-	if text == "" {
+	if text == "" && !(exclusive && reextract != nil) {
 		parts := make([]string, 0, len(group))
 		for _, cell := range group {
 			if trimmed := strings.TrimSpace(cell.Text); trimmed != "" {

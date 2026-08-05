@@ -403,6 +403,16 @@ type markdownBlock struct {
 }
 
 func pageMarkdownBlocks(ctx context.Context, cells []page.TextCell, wordCells []page.TextCell, rulings []page.RulingSegment, formFields []page.FormField, size geom.Size, options ExtractionOptions) ([]markdownBlock, error) {
+	// Suppress text inside caption-anchored vector drawings before any
+	// structure detection: node labels, axis ticks, and box labels inside a
+	// figure otherwise surface as body text, headings, or fake table cells.
+	// Captions and prose-like cells survive (see dropCellsInFigureRegions).
+	if regions := figureRegions(cells, rulings, size); len(regions) > 0 {
+		cells = dropCellsInFigureRegions(cells, regions)
+		if len(wordCells) > 0 {
+			wordCells = dropCellsInFigureRegions(wordCells, regions)
+		}
+	}
 	// Reassign each cell a column-aware reading-order Index, then assemble text
 	// per column so that lines are never merged across a column gutter. When the
 	// detector is not confident the page is multi-column, orderCells is identity

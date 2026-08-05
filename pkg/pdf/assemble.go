@@ -379,7 +379,7 @@ func joinParagraphLineTexts(lines []string) string {
 	for _, line := range lines[1:] {
 		next := strings.TrimSpace(line)
 		if shouldDehyphenateLineJoin(out, next) {
-			out = strings.TrimSuffix(strings.TrimSpace(out), "-") + next
+			out = trimTrailingLineHyphen(strings.TrimSpace(out)) + next
 			continue
 		}
 		out += " " + next
@@ -387,13 +387,44 @@ func joinParagraphLineTexts(lines []string) string {
 	return out
 }
 
+// lineHyphenSuffixes are the line-end hyphen forms a reflow removes: the plain
+// hyphen-minus, its Unicode twin, and the soft hyphen (typeset only at a break
+// by definition).
+//
+// \x02 — the marker the text page substitutes for a line-break hyphen it has
+// judged mid-word (charHyphen) — is deliberately NOT here. That marker fires
+// on the hyphen of a hard compound split across lines ("German-/to-Polish")
+// just as readily as on a soft one, and removing it silently welds the
+// compound shut. collapseSpaces restores it to a visible "-" instead.
+var lineHyphenSuffixes = []string{"-", "‐", "­"}
+
+func trailingLineHyphen(text string) string {
+	for _, suffix := range lineHyphenSuffixes {
+		if strings.HasSuffix(text, suffix) {
+			return suffix
+		}
+	}
+	return ""
+}
+
+func trimTrailingLineHyphen(text string) string {
+	if suffix := trailingLineHyphen(text); suffix != "" {
+		return strings.TrimSuffix(text, suffix)
+	}
+	return text
+}
+
 func shouldDehyphenateLineJoin(left, right string) bool {
 	left = strings.TrimSpace(left)
 	right = strings.TrimSpace(right)
-	if left == "" || right == "" || !strings.HasSuffix(left, "-") {
+	if left == "" || right == "" {
 		return false
 	}
-	leftRunes := []rune(strings.TrimSuffix(left, "-"))
+	suffix := trailingLineHyphen(left)
+	if suffix == "" {
+		return false
+	}
+	leftRunes := []rune(strings.TrimSuffix(left, suffix))
 	rightRunes := []rune(right)
 	if len(leftRunes) == 0 || len(rightRunes) == 0 {
 		return false

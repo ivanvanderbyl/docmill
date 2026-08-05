@@ -844,18 +844,32 @@ func (p *StreamContentParser) parsePathObject() {
 					}
 					numbers.reset()
 				case 'c':
+					// A curve is part of the path, so it must contribute a
+					// segment: without one, a figure drawn entirely from
+					// Béziers (circles, arcs, plot traces) reports no geometry
+					// at all. The chord from the current point to the endpoint
+					// is used rather than the control polygon — it adds no
+					// geometry the curve does not actually span, and a chord is
+					// almost always diagonal, so it does not masquerade as a
+					// table rule (which requires an axis-aligned segment).
 					if len(values) >= 6 {
-						current = pointFromNumbers(values)
+						next := pointFromNumbers(values)
+						segments = append(segments, PathSegment{From: current, To: next})
+						current = next
 					}
 					numbers.reset()
 				case 'v':
 					if len(values) >= 4 {
-						current = pointFromNumbers(values)
+						next := pointFromNumbers(values)
+						segments = append(segments, PathSegment{From: current, To: next})
+						current = next
 					}
 					numbers.reset()
 				case 'y':
 					if len(values) >= 4 {
-						current = pointFromNumbers(values)
+						next := pointFromNumbers(values)
+						segments = append(segments, PathSegment{From: current, To: next})
+						current = next
 					}
 					numbers.reset()
 				case 'h':

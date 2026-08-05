@@ -180,13 +180,20 @@ func (p *Page) TextCells(ctx context.Context) ([]docpage.TextCell, error) {
 	}
 	cells := docpdf.TextRectsToCells(textRects, size.Height)
 
+	// The claimed bitmap makes re-extraction CONSUMING across the whole merge
+	// pass: each character is emitted into exactly one merged cell, in
+	// processing order. Without it, a glyph whose charBox straddles two cell
+	// regions (big-operator limits and sub/superscripts routinely overlap the
+	// neighbouring line's rect) is swept into both rect queries and appears
+	// twice in the output.
+	claimed := make([]bool, tp.CountChars())
 	reextract := func(box geom.Box) string {
 		bounds := docpdf.TopLeftBoxToPDFiumBounds(box, size.Height)
-		return tp.GetTextByRect(crt.NewFloatRect(
+		return tp.GetTextByRectClaiming(crt.NewFloatRect(
 			float32(bounds.Left), float32(bounds.Bottom),
-			float32(bounds.Right), float32(bounds.Top)))
+			float32(bounds.Right), float32(bounds.Top)), claimed)
 	}
-	cells = docpdf.MergeFragmentedCells(cells, reextract, docpdf.MergeOptions{})
+	cells = docpdf.MergeFragmentedCells(cells, reextract, docpdf.MergeOptions{ExclusiveReextract: true})
 	return cells, nil
 }
 

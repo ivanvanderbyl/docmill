@@ -50,6 +50,7 @@ The benchmark validates that the config contains all requested solution names:
 - `opendataloader-hybrid`
 - `liteparse`
 - `pypdf`
+- `pdf-inspector`
 
 Use `-allow-missing` only for local smoke checks; a publishable benchmark should not use it.
 
@@ -57,12 +58,16 @@ The example config assumes these public package entrypoints:
 
 ```bash
 python3 -m pip install docling "markitdown[pdf]" pymupdf4llm pypdf liteparse
-python3 -m pip install opendataloader-pdf
+python3 -m pip install opendataloader-pdf pdf-inspector
 ```
 
 - The Python adapters use `benchmarks/dpbench/python_converter.py`; edit
   `python3` to your virtualenv interpreter when needed.
 - OpenDataLoader exposes `opendataloader-pdf` and requires Java 11+ on `PATH`.
+- `pdf-inspector` is Firecrawl's Rust parser; the Python wheel ships a prebuilt
+  native binary, so no Rust toolchain is needed. It routes scanned pages to OCR
+  instead of parsing them, and the adapter records that as an empty conversion —
+  expect low scores on any scanned document in the corpus.
 - OpenDataLoader hybrid mode additionally needs
   `python3 -m pip install "opendataloader-pdf[hybrid]"` and a running server:
 
