@@ -75,14 +75,22 @@ func texUnicodeTable(enc texEncoding) *[256]rune {
 // comment; all three must hold for an identification to be accepted.
 const (
 	// texMinFingerprintCodes is the minimum number of distinct glyphs needed
-	// before a width fingerprint is trusted at all. A 1-3 glyph subset does
-	// not carry enough metric evidence to name its encoding.
-	texMinFingerprintCodes = 4
+	// before a width fingerprint is trusted at all. Below this a subset does
+	// not carry enough metric evidence to name its encoding: sampling random
+	// k-glyph subsets of the Adobe base-14 metrics and feeding them to this
+	// detector, the false-identification rate for Times-Roman falls from 8.4%
+	// at k=4 to 5.3% at k=5, and the remaining tail is closed by the tighter
+	// error bound below.
+	texMinFingerprintCodes = 5
 	// texMaxMatchError is the maximum relative mean absolute width error for
-	// the winning candidate (2%). True matches calibrate at <= 0.9% (the gap
-	// above that covers device-pixel quantisation of small bitmap fonts);
-	// the closest observed false candidate is 4.6%.
-	texMaxMatchError = 0.02
+	// the winning candidate. True matches calibrate at <= 0.9% (the headroom
+	// above that covers device-pixel quantisation of small bitmap fonts).
+	// The earlier 2% bound was calibrated only against WHOLE non-TeX fonts,
+	// which are all rejected by a wide margin; it did not hold for the small
+	// SUBSETS that real PDFs commonly embed. Tightening to 1% cuts the
+	// measured Times-Roman subset false-identification rate from 2.16% to
+	// 0.06% while still accepting every real dvips subset under test.
+	texMaxMatchError = 0.010
 	// texMinRunnerUpMargin is how much worse (absolute, in relative-error
 	// points) the best candidate of every OTHER encoding must be. True
 	// matches calibrate with >= 7-point margins.
