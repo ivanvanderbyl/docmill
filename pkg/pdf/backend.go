@@ -491,8 +491,13 @@ func pageMarkdownBlocks(ctx context.Context, cells []page.TextCell, wordCells []
 	tableCells, protectedTableCells := splitCellsByIndexSet(cells, tableProtected)
 	// Keep marginal page numbers out of table detection entirely: a table or
 	// equation region reaching the page edge otherwise swallows the page number
-	// into a cell mid-content.
+	// into a cell mid-content. The word-level cells feed anchored detection and
+	// table text reassignment, so they are filtered too — otherwise a table
+	// whose box reaches the margin band swallows the number via the word path.
 	tableCells, marginalNumberCells := splitMarginalPageNumberCells(tableCells, size)
+	if len(wordCells) > 0 {
+		wordCells, _ = splitMarginalPageNumberCells(wordCells, size)
+	}
 	detected := doctable.DetectTables(tableCells, rulings, options.TableDetection)
 	remainingCells := detected.TextCells
 	tableOverlapThreshold := normalisedTableOverlapThreshold(options.TableDetection)
@@ -820,10 +825,16 @@ func normalisedTableOverlapThreshold(options doctable.DetectionOptions) float64 
 // the page's top/bottom margin from the table-detection input, returning them
 // separately so they flow to the ordinary text path. A table, equation block,
 // or figure reaching the page edge otherwise swallows the page number into a
-// cell mid-content. The cell must be alone on its text line — a number inside
-// a footer sentence is the trailing-page-number split's job — and the position
-// test is pure geometry (the same margin band splitMarginalPageNumberBlocks
-// uses).
+// cell mid-content. Three co-signals gate the extraction, so a bare number
+// that is table DATA (a year or count in a margin-band row) is never pulled
+// out:
+//   - position: the cell sits in the page's top/bottom margin band (the same
+//     band splitMarginalPageNumberBlocks uses);
+//   - alone on its line: a number inside a footer sentence is the
+//     trailing-page-number split's job;
+//   - vertically isolated: page furniture is separated from the nearest
+//     content by well over a row pitch, whereas a table row has neighbouring
+//     rows within roughly a line height.
 func splitMarginalPageNumberCells(cells []page.TextCell, size geom.Size) ([]page.TextCell, []page.TextCell) {
 	const lineTolerance = 4.0
 	if size.Height <= 0 || len(cells) == 0 {
@@ -836,17 +847,23 @@ func splitMarginalPageNumberCells(cells []page.TextCell, size geom.Size) ([]page
 			remaining = append(remaining, cell)
 			continue
 		}
+		isolation := math.Max(2.5*cell.Box.Height(), 18)
 		aloneOnLine := true
+		isolated := true
 		for otherIndex, other := range cells {
 			if otherIndex == index {
 				continue
 			}
-			if math.Abs(other.Box.CenterY()-cell.Box.CenterY()) <= lineTolerance {
+			distance := math.Abs(other.Box.CenterY() - cell.Box.CenterY())
+			if distance <= lineTolerance {
 				aloneOnLine = false
 				break
 			}
+			if distance < isolation {
+				isolated = false
+			}
 		}
-		if !aloneOnLine {
+		if !aloneOnLine || !isolated {
 			remaining = append(remaining, cell)
 			continue
 		}

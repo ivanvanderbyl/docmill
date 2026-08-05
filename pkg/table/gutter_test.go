@@ -99,3 +99,61 @@ func TestDetectAnchoredTextTablesKeepsGenuineWideTableWithPersistentGutters(t *t
 	require.Len(t, result.Tables, 1)
 	require.Equal(t, 5, result.Tables[0].Data.NumCols)
 }
+
+// raggedNumericTableCells is the reviewed false-positive case: a four-column
+// numeric table with tight gutters and right-aligned numbers of mixed
+// magnitude. Wide entries ("14231", "12345.67") reach far left of their
+// column's median content extent, but each sits alone in its own column — the
+// gutter persists on every line — so the gate must not fire.
+func raggedNumericTableCells() []page.TextCell {
+	return []page.TextCell{
+		textCell(1, "Case", 40, 100, 68, 110),
+		textCell(2, "N", 110, 100, 118, 110),
+		textCell(3, "Cost", 158, 100, 186, 110),
+		textCell(4, "Rate", 210, 100, 238, 110),
+		textCell(5, "a", 40, 114, 48, 124),
+		textCell(6, "7", 111, 114, 118, 124),
+		textCell(7, "1.5", 164, 114, 186, 124),
+		textCell(8, "0.9", 217, 114, 238, 124),
+		textCell(9, "b", 40, 128, 48, 138),
+		textCell(10, "14231", 78, 128, 118, 138),
+		textCell(11, "12345.67", 128, 128, 186, 138),
+		textCell(12, "9812.4", 196, 128, 238, 138),
+		textCell(13, "c", 40, 142, 48, 152),
+		textCell(14, "9", 111, 142, 118, 152),
+		textCell(15, "2.5", 164, 142, 186, 152),
+		textCell(16, "0.7", 217, 142, 238, 152),
+		textCell(17, "d", 40, 156, 48, 166),
+		textCell(18, "98341", 78, 156, 118, 166),
+		textCell(19, "98765.43", 128, 156, 186, 166),
+		textCell(20, "4471.9", 196, 156, 238, 166),
+		textCell(21, "e", 40, 170, 48, 180),
+		textCell(22, "3", 111, 170, 118, 180),
+		textCell(23, "3.5", 164, 170, 186, 180),
+		textCell(24, "0.5", 217, 170, 238, 180),
+		textCell(25, "f", 40, 184, 48, 194),
+		textCell(26, "45129", 78, 184, 118, 194),
+		textCell(27, "45678.90", 128, 184, 186, 194),
+		textCell(28, "7723.1", 196, 184, 238, 194),
+	}
+}
+
+func TestDetectTextTablesKeepsRaggedRightAlignedNumericTable(t *testing.T) {
+	t.Parallel()
+
+	result := table.DetectTextTables(raggedNumericTableCells(), table.DetectionOptions{})
+
+	require.Len(t, result.Tables, 1)
+	require.Equal(t, 4, result.Tables[0].Data.NumCols)
+}
+
+func TestDetectAnchoredTextTablesKeepsRaggedRightAlignedNumericTable(t *testing.T) {
+	t.Parallel()
+
+	cells := raggedNumericTableCells()
+
+	result := table.DetectAnchoredTextTables(cells, cells, table.DetectionOptions{})
+
+	require.Len(t, result.Tables, 1)
+	require.Equal(t, 4, result.Tables[0].Data.NumCols)
+}

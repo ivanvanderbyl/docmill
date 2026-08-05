@@ -253,9 +253,12 @@ const (
 	// each side); scaled up for large type via gutterCrossToleranceHeightRatio.
 	gutterCrossMinTolerance         = 2.0
 	gutterCrossToleranceHeightRatio = 0.25
-	// gutterMinCrossingLines is the absolute floor before the gate may fire, so
-	// one stray line can never suppress a small table.
-	gutterMinCrossingLines = 2
+	// gutterMinCrossingLines is the absolute floor before the crossing rules
+	// may fire. Genuine tables legitimately contain up to two spanning lines
+	// (a merged multi-column header plus a full-width title, section, or
+	// footnote line), so fewer than three crossing lines is never treated as
+	// prose flowing across the grid.
+	gutterMinCrossingLines = 3
 	// gutterCrossingLineFraction: suppress when this share of lines contains a
 	// boundary-crossing run.
 	gutterCrossingLineFraction = 0.5
@@ -265,6 +268,11 @@ const (
 	// gutterMinDegenerateGutters: suppress when at least this many gutters have
 	// (nearly) no width AND they make up at least half the gutters.
 	gutterMinDegenerateGutters = 2
+	// gutterDegenerateHeightRatio and gutterDegenerateMaxWidth bound the width
+	// below which a corridor is too narrow to be a visual column separator
+	// (about half a character height, capped for outsized display glyphs).
+	gutterDegenerateHeightRatio = 0.5
+	gutterDegenerateMaxWidth    = 6.0
 )
 
 // dropGutterCrossingTables removes detected borderless tables whose interior
@@ -374,16 +382,23 @@ func tableViolatesGutterPersistence(detected DetectedTable, rowTolerance float64
 		return false
 	}
 
-	cores := tableColumnContentCores(detected.Data, rows)
+	cores, coreBands := tableColumnContentCores(detected.Data, rows)
 	if len(cores) < 2 {
 		return false
 	}
 
-	tolerance := math.Max(gutterCrossMinTolerance, gutterCrossToleranceHeightRatio*modalTextCellHeight(detected.TextCells))
+	modalHeight := modalTextCellHeight(detected.TextCells)
+	tolerance := math.Max(gutterCrossMinTolerance, gutterCrossToleranceHeightRatio*modalHeight)
 
+	// A corridor narrower than about half a character height cannot separate
+	// columns visually; when at least two such corridors make up half the
+	// gutters, the columns' content interpenetrates row to row (drifting
+	// mathematics), not a grid. Real tables' median corridors measure well
+	// above this even in tight layouts.
+	degenerateWidth := math.Max(tolerance, math.Min(gutterDegenerateHeightRatio*modalHeight, gutterDegenerateMaxWidth))
 	degenerate := 0
 	for index := 0; index+1 < len(cores); index++ {
-		if cores[index+1].L-cores[index].R < tolerance {
+		if cores[index+1].L-cores[index].R < degenerateWidth {
 			degenerate++
 		}
 	}
@@ -396,6 +411,7 @@ func tableViolatesGutterPersistence(detected DetectedTable, rowTolerance float64
 	for _, row := range rows {
 		lineCrosses := false
 		for _, cell := range row.Cells {
+			own := columnBandForCell(coreBands, cell.Box.CenterX())
 			for boundary := 0; boundary+1 < len(cores); boundary++ {
 				// The cell's ink covers the middle of the claimed gutter (with
 				// a margin capped at half the corridor so narrow corridors are
@@ -403,10 +419,19 @@ func tableViolatesGutterPersistence(detected DetectedTable, rowTolerance float64
 				// short of the corridor middle and does not count.
 				middle := (cores[boundary].R + cores[boundary+1].L) / 2
 				margin := math.Max(0, math.Min(tolerance, (cores[boundary+1].L-cores[boundary].R)/2))
-				if cell.Box.L < middle-margin && cell.Box.R > middle+margin {
-					perBoundary[boundary]++
-					lineCrosses = true
+				if cell.Box.L >= middle-margin || cell.Box.R <= middle+margin {
+					continue
 				}
+				// The run must also overlap ANOTHER column's content, not just
+				// the gutter: a wide entry in a ragged right- (or left-)
+				// aligned column reaches across the corridor middle but sits
+				// alone in its own column, whereas a genuine spanning prose
+				// line covers the neighbouring column's content as well.
+				if !cellOverlapsForeignCore(cell.Box, own, boundary, cores, tolerance) {
+					continue
+				}
+				perBoundary[boundary]++
+				lineCrosses = true
 			}
 		}
 		if lineCrosses {
@@ -432,10 +457,10 @@ func tableViolatesGutterPersistence(detected DetectedTable, rowTolerance float64
 // and each column's core is the median left/right edge of its per-line group
 // boxes. Columns with no assigned content are skipped; the returned cores are
 // ordered left to right.
-func tableColumnContentCores(data Data, rows []textline.ParagraphTextLine) []geom.Box {
+func tableColumnContentCores(data Data, rows []textline.ParagraphTextLine) ([]geom.Box, []geom.Box) {
 	bands := tableColumnBands(data)
 	if len(bands) < 2 {
-		return nil
+		return nil, nil
 	}
 
 	type group struct {
@@ -467,13 +492,31 @@ func tableColumnContentCores(data Data, rows []textline.ParagraphTextLine) []geo
 	}
 
 	cores := make([]geom.Box, 0, len(bands))
+	coreBands := make([]geom.Box, 0, len(bands))
 	for column := range bands {
 		if len(lefts[column]) == 0 {
 			continue
 		}
 		cores = append(cores, geom.Box{L: medianFloat64(lefts[column]), R: medianFloat64(rights[column])})
+		coreBands = append(coreBands, bands[column])
 	}
-	return cores
+	return cores, coreBands
+}
+
+// cellOverlapsForeignCore reports whether the cell's ink overlaps, by more
+// than tolerance, the content core of a column adjacent to the given boundary
+// that is NOT the cell's own column.
+func cellOverlapsForeignCore(cell geom.Box, own, boundary int, cores []geom.Box, tolerance float64) bool {
+	for _, coreIndex := range [2]int{boundary, boundary + 1} {
+		if coreIndex == own || coreIndex < 0 || coreIndex >= len(cores) {
+			continue
+		}
+		overlap := math.Min(cell.R, cores[coreIndex].R) - math.Max(cell.L, cores[coreIndex].L)
+		if overlap > tolerance {
+			return true
+		}
+	}
+	return false
 }
 
 // tableColumnBands recovers each column's horizontal band from the grid's

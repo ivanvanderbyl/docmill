@@ -103,3 +103,64 @@ NID -0.0153) and doc_c4416f (TEDS +0.1165, extraction +0.0095, NID -0.0384).
 No case regressed without a larger compensating improvement on the same
 document. milliseconds_per_page measured under concurrent load (3 other
 agents); not meaningful per the task brief.
+
+---
+
+# Post-review revision
+
+The first submission was reviewed and not merged: the gate suppressed a real
+four-column numeric table whose right-aligned entries have mixed magnitude
+(wide entries reach left of their column's MEDIAN content extent and were
+scored as gutter crossings). Changes in this revision:
+
+1. **Crossing co-signal (the blocker fix).** A run covering a corridor
+   midpoint only counts as a crossing when it also overlaps ANOTHER column's
+   content core by more than the tolerance. A wide ragged entry sits alone in
+   its own column and is now exempt; genuine spanning prose still covers the
+   neighbouring columns' content. Regression tests
+   (`TestDetect*KeepsRaggedRightAlignedNumericTable`) verified to fail without
+   the fix.
+2. **Crossing floor raised 2 → 3** so up to two spanning lines (merged group
+   header plus a full-width title/section/footnote line) never fire the gate;
+   near-miss negative tests added for both shapes, plus direct tests for
+   `dropGutterCrossingTables` claim release and the token fallback.
+3. **Degenerate corridor width** raised from the crossing tolerance (~2.5pt)
+   to half the modal character height capped at 6pt: a corridor narrower than
+   half a character cannot separate columns visually. Real-table margins:
+   smallest real median corridor measured is 9.6pt (page-6 table) apart from
+   one isolated 1.6pt corridor, which stays under the ≥2-corridor floor.
+4. **connect.go** `appendTableRows`/`gridRowText` now takes a spanned cell's
+   text only at its anchor slot (same rule as render.Table), with a test —
+   cross-page-stitched tables no longer duplicate spanned text.
+5. **wordCells** are now filtered through the marginal page-number split
+   before anchored detection and word-based text reassignment, closing the
+   word-path route for swallowing page numbers.
+6. **Page-number extraction co-signal:** the cell must also be vertically
+   isolated (nearest neighbour further than 2.5x its height, min 18pt), so a
+   bare year/count in a margin-band table row is never pulled out of table
+   detection; test added.
+
+## Revised entropy.pdf result
+
+19 blocks / 121 rows -> **14 blocks / 66 rows** (first submission was 8/44).
+Zero duplicated rows; all four real tables intact; page numbers standalone.
+The safety fixes give back six equation-drift fakes that only the (unsafe)
+midpoint-crossing rule had caught (pages 16, 18, 21, 27, 28, 30): their runs
+cover corridor midpoints without touching neighbouring content — the same
+geometry as a wide ragged numeric entry, which is exactly the false-positive
+class the review found. Distinguishing them needs a signal this gate does not
+have; deferred rather than risked.
+
+## Revised DPBench (vs 513c968)
+
+| Metric | Baseline | Revised | Delta |
+|---|---|---|---|
+| table_structure_teds | 0.763126 | 0.763683 | +0.000557 |
+| extraction_accuracy | 0.921572 | 0.921965 | +0.000392 |
+| reading_order_nid | 0.893762 | 0.893678 | -0.000084 |
+| heading_level_mhs | 0.770814 | 0.770814 | 0 |
+| errors / cases | 0 / 200 | 0 / 200 | 0 |
+
+7 cases changed; both reading-order dips co-occur with larger same-case wins
+(doc_a5b975: TEDS 0 -> 1, NID -0.0153; doc_8bfb767: extraction +0.002,
+NID -0.0016). No case regressed without a compensating improvement.

@@ -48,3 +48,23 @@ func TestSplitMarginalPageNumberCellsKeepsBodyDigitsAndSharedLines(t *testing.T)
 	require.Empty(t, marginal)
 	require.Len(t, remaining, 3)
 }
+
+func TestSplitMarginalPageNumberCellsKeepsBareNumberNearTableRows(t *testing.T) {
+	t.Parallel()
+
+	size := geom.Size{Width: 612, Height: 792}
+	// A bare year in the bottom row of a table reaching into the margin band:
+	// the neighbouring row sits one line pitch above, so the cell is not
+	// vertically isolated the way page furniture is, and must stay available
+	// to table detection.
+	cells := []page.TextCell{
+		marginalTestCell(1, "Revenue", 92, 712, 150, 722),
+		marginalTestCell(2, "412", 300, 712, 320, 722),
+		marginalTestCell(3, "1998", 300, 726, 326, 736),
+	}
+
+	remaining, marginal := splitMarginalPageNumberCells(cells, size)
+
+	require.Empty(t, marginal)
+	require.Len(t, remaining, 3)
+}
