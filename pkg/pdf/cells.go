@@ -125,6 +125,30 @@ func splitCellRowGroups(row []page.TextCell, horizontalFactor float64) [][]page.
 	return append(groups, group)
 }
 
+// leadingFragmentFontSize returns the size of a merge group's first fragment
+// that declares a credible one (see credibleCellFontSize), falling back to the
+// group's largest declared size when none is credible — which is what the merge
+// reported before.
+//
+// Invariant encoded: a sub-word fragment run opens at the size the document set
+// the run in. Reading order gives the answer directly, so no statistics are
+// needed and the result is always a size that genuinely occurs in the group.
+func leadingFragmentFontSize(group []page.TextCell) float64 {
+	maxSize := 0.0
+	for _, cell := range group {
+		if cell.FontSize > maxSize {
+			maxSize = cell.FontSize
+		}
+	}
+	for _, cell := range group {
+		if isListSpacerText(strings.TrimSpace(cell.Text)) || !credibleCellFontSize(cell) {
+			continue
+		}
+		return cell.FontSize
+	}
+	return maxSize
+}
+
 // mergeCellShell unions a group's geometry and font metadata into one cell,
 // leaving Text as the first member's (callers overwrite it).
 func mergeCellShell(group []page.TextCell) page.TextCell {
@@ -133,7 +157,24 @@ func mergeCellShell(group []page.TextCell) page.TextCell {
 	}
 
 	box := group[0].Box
-	fontSize := group[0].FontSize
+	// Font size follows the same rule as the rest of the font metadata below:
+	// the LEADING fragment's, not the group's maximum. A merge group is a run of
+	// sub-word fragments that a document sets in one nominal size; where the
+	// declared sizes differ inside it, the run opens at its nominal size and the
+	// deviations are decoration. Under a maximum, one oversized glyph absorbed
+	// into a run — a summation, an integral, a radical, a stretched bracket —
+	// made the whole merged cell claim that glyph's size, so a dozen body-sized
+	// characters were reported as title-sized and every size test downstream
+	// (heading prominence, body-font estimation, figure-label suppression) read
+	// the run as prominent.
+	//
+	// The leading fragment is the right representative rather than the dominant
+	// (majority) size because a small-caps run is a counter-example to majority:
+	// its capitals carry the nominal size and its small capitals — set ~0.8x and
+	// the majority of the characters — do not. Taking the opening fragment reads
+	// a small-caps section title at its true size AND an absorbed math delimiter
+	// at the run's body size.
+	fontSize := leadingFragmentFontSize(group)
 	// Font info: take the first cell's font as the representative. Cells in a
 	// merge group are sub-word fragments on the same baseline; they share a
 	// font in virtually all born-digital PDFs. If a group spans a font
@@ -151,7 +192,6 @@ func mergeCellShell(group []page.TextCell) page.TextCell {
 		box.T = math.Min(box.T, cell.Box.T)
 		box.R = math.Max(box.R, cell.Box.R)
 		box.B = math.Max(box.B, cell.Box.B)
-		fontSize = math.Max(fontSize, cell.FontSize)
 	}
 	box.Origin = geom.TopLeft
 

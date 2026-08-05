@@ -73,7 +73,13 @@ func TestMergeExclusiveMergesAdjacentFragments(t *testing.T) {
 	got := pdf.MergeFragmentedCellsExclusive(cells, echoTexts(t, 1, "Hello"), pdf.MergeOptions{})
 	require.Len(t, got, 1)
 	require.Equal(t, "Hello", got[0].Text)
-	require.Equal(t, 14.0, got[0].FontSize)
+	// The merged run reports the size it OPENS at, matching the font name,
+	// weight and colour the merge already takes from the leading fragment. It
+	// is deliberately NOT the maximum: a run that absorbs one oversized glyph
+	// (a summation, an integral, a stretched bracket) would otherwise report
+	// every one of its characters as that glyph's size. See
+	// leadingFragmentFontSize.
+	require.Equal(t, 10.0, got[0].FontSize)
 	require.Equal(t, geom.Box{L: 0, T: 0, R: 20, B: 10, Origin: geom.TopLeft}, got[0].Box)
 }
 

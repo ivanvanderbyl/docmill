@@ -851,6 +851,34 @@ func lineMetric(line ParagraphTextLine) float64 {
 	return line.BBox.Height()
 }
 
+// linePeakMetric returns the LARGEST cell size on a line, as line.FontSize used
+// to before it became the dominant (character-weighted median) size.
+//
+// Invariant encoded: running body prose is set in ONE size. A line that mixes
+// body-sized text with a run of materially larger glyphs is structured content
+// — a label/value table row whose stub column is set larger than its value
+// column, a run-in header, a wrapped title fragment — not a plain paragraph.
+// Callers that ask "is this line ordinary body prose?" therefore need the
+// line's PEAK size, because the question is whether any prominent run is
+// present at all, not what the majority of the line is set in. Callers that ask
+// "how prominent is this line?" want lineMetric instead, so one oversized
+// delimiter cannot make a body line read as a title.
+func linePeakMetric(line ParagraphTextLine) float64 {
+	peak := 0.0
+	for _, cell := range line.Cells {
+		if isListSpacerText(strings.TrimSpace(cell.Text)) {
+			continue
+		}
+		if cell.FontSize > peak {
+			peak = cell.FontSize
+		}
+	}
+	if peak > 0 {
+		return peak
+	}
+	return lineMetric(line)
+}
+
 func splitStructuralHeadingCandidates(line ParagraphTextLine) []ParagraphTextLine {
 	if len(line.Cells) < 2 {
 		return nil
@@ -1569,7 +1597,7 @@ func hasAlignedBodyLikeFollowingLine(line, next ParagraphTextLine, bodyMetric fl
 	if text == "" || strings.ContainsAny(text, "@{}") {
 		return false
 	}
-	if bodyMetric > 0 && lineMetric(next) > bodyMetric*1.08 {
+	if bodyMetric > 0 && linePeakMetric(next) > bodyMetric*1.08 {
 		return false
 	}
 	if line.BBox.L-next.BBox.L > math.Max(24, line.BBox.Height()*2.5) {

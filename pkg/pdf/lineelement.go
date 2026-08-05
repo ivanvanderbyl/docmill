@@ -247,16 +247,13 @@ func buildParagraphTextLine(cells []page.TextCell) ParagraphTextLine {
 
 	boxes := make([]geom.Box, 0, len(cells))
 	minIndex := cells[0].Index
-	fontSize := cells[0].FontSize
 	for _, cell := range cells {
 		boxes = append(boxes, cell.Box)
 		if cell.Index < minIndex {
 			minIndex = cell.Index
 		}
-		if cell.FontSize > fontSize {
-			fontSize = cell.FontSize
-		}
 	}
+	fontSize := dominantFontSize(cells)
 
 	full := append([]page.TextCell(nil), cells...)
 	listCandidate, listContentL := geometricListMarker(full)
@@ -274,6 +271,109 @@ func buildParagraphTextLine(cells []page.TextCell) ParagraphTextLine {
 		ListCandidate: listCandidate,
 		ListContentL:  listContentL,
 	}
+}
+
+// maxGlyphBoxToFontSize is the largest ratio of rendered box height to declared
+// font size that a real glyph can reach. A glyph is drawn inside its font's em
+// square plus a little overshoot, so even the tallest stretched delimiter of a
+// well-formed font stays near 2x its point size. A box several times taller
+// than the declared size therefore means the declared size is not the size the
+// glyph was drawn at — the value came from an unresolved or matrix-scaled font
+// rather than from the text state.
+const maxGlyphBoxToFontSize = 3.0
+
+// credibleCellFontSize reports whether a cell's declared font size may be used
+// as evidence of the size its characters were set in.
+//
+// Invariant encoded: a declared font size is only believable when it is
+// commensurate with the space the glyphs actually occupy. Some PDFs carry cells
+// whose declared size is a fraction of a point inside a full-height box (a
+// matrix-scaled or unresolved font); the number is a text-state artefact, not a
+// type size. A maximum silently ignored such cells because they are tiny, but a
+// median would let them outvote the run's real size, so they must be excluded
+// explicitly.
+//
+// The test is deliberately ONE-SIDED. A box much TALLER than its declared size
+// is incoherent, but a box much SHORTER is ordinary: a full stop, a hyphen or
+// an apostrophe occupies a small fraction of its em.
+func credibleCellFontSize(cell page.TextCell) bool {
+	if cell.FontSize <= 0 {
+		return false
+	}
+	height := cell.Box.Height()
+	return height <= 0 || height <= maxGlyphBoxToFontSize*cell.FontSize
+}
+
+// dominantFontSize returns a run of cells' representative type size: the
+// character-count-weighted median of their font sizes. It is the shared
+// definition of "how big is this text set", used both for a visual line
+// (buildParagraphTextLine) and for a merged sub-word fragment run
+// (mergeCellShell).
+//
+// Invariant encoded: a run of text's font-size metric is the size at which the
+// majority of its rendered characters are set. Every line carries a
+// typographic body plus, optionally, a minority of differently-sized
+// decoration — oversized display-math delimiters, integrals, radicals and
+// drop caps above it; super/subscripts, footnote daggers, trailing folio
+// numbers and section markers below it. Decoration is by definition a
+// minority of the glyph mass, so only a size carrying at least half the
+// characters may define the metric. This replaces the previous maximum,
+// under which a single oversized glyph made a whole line measure as
+// title-sized.
+//
+// Weighting is by rune count rather than by box width or area precisely so
+// that one wide glyph cannot outvote the run of ordinary characters beside it:
+// a summation sign is one character however much page it covers.
+//
+// Mixed lines resolve by majority, not by prominence, in both directions. A
+// drop-cap line ("T" at 30pt followed by 60 body characters at 10pt) measures
+// 10pt, because it is a body line wearing an ornament. A heading with a small
+// trailing marker ("2. THE DISCRETE SOURCE" at 12pt plus a 7pt footnote
+// index) measures 12pt, because the heading text is the majority. Exact ties
+// resolve DOWNWARD (lower weighted median): a line split evenly between two
+// sizes has no dominant body, and the smaller reading is the conservative one
+// for the prominence gates downstream, which promote on size.
+//
+// The result is always a size that genuinely occurs on the line — never an
+// average — so it stays directly comparable with page.TextCell.FontSize in the
+// cell-level heading guards that measure a marker or continuation cell against
+// its line. Cells with no credible font size or no visible text carry no
+// evidence and are skipped; when a run has no such evidence at all the maximum
+// declared size is returned, which is what callers saw before.
+func dominantFontSize(cells []page.TextCell) float64 {
+	type sample struct {
+		size   float64
+		weight int
+	}
+
+	maxSize := 0.0
+	samples := make([]sample, 0, len(cells))
+	total := 0
+	for _, cell := range cells {
+		if cell.FontSize > maxSize {
+			maxSize = cell.FontSize
+		}
+		text := strings.TrimSpace(cell.Text)
+		if !credibleCellFontSize(cell) || isListSpacerText(text) {
+			continue
+		}
+		weight := utf8.RuneCountInString(text)
+		samples = append(samples, sample{size: cell.FontSize, weight: weight})
+		total += weight
+	}
+	if total <= 0 {
+		return maxSize
+	}
+
+	sort.SliceStable(samples, func(i, j int) bool { return samples[i].size < samples[j].size })
+	cumulative := 0
+	for _, s := range samples {
+		cumulative += s.weight
+		if 2*cumulative >= total {
+			return s.size
+		}
+	}
+	return maxSize
 }
 
 // orderCellsForReading sorts a line's cells into reading order: columns
