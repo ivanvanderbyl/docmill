@@ -88,6 +88,7 @@ func (f *Font) loadCommon() bool {
 	}
 	f.loadPDFEncoding(f.hasFontFile, f.kind == kindTrueType)
 	f.loadGlyphMap()
+	f.resolveTeXEncoding()
 	f.charNames = nil
 	return true
 }
@@ -306,6 +307,7 @@ func (f *Font) loadCommonBase14() bool {
 	}
 	f.loadPDFEncoding(f.hasFontFile, false)
 	f.loadGlyphMap()
+	f.resolveTeXEncoding()
 	f.charNames = nil
 	f.loadBase14Metrics()
 	return true
@@ -402,6 +404,7 @@ func (f *Font) loadType3() bool {
 	if f.fontDict.GetDirectObjectFor("Encoding") != nil {
 		f.loadPDFEncoding(false, false)
 	}
+	f.resolveTeXEncoding()
 	return true
 }
 
