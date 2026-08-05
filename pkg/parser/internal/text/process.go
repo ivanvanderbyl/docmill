@@ -5,7 +5,6 @@ package text
 
 import (
 	"math"
-	"sort"
 	"unicode"
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
@@ -1177,34 +1176,6 @@ func (tp *TextPage) textFromSelectedIndices(indices, nonSpacePrefix []int) strin
 	return string(text)
 }
 
-// ensureCharBands builds the vertical band index over charList (and the
-// non-space prefix sums) once per page. Band-indexed readers visit only the
-// characters that can overlap a query box instead of the whole page stream,
-// which is what keeps a per-cell re-extraction pass linear in the page rather
-// than quadratic.
-func (tp *TextPage) ensureCharBands() {
-	if tp.charBandsReady {
-		return
-	}
-	tp.charBandsReady = true
-	tp.charBands = make(map[int][]int)
-	tp.nonSpacePrefix = make([]int, len(tp.charList)+1)
-	for index, ci := range tp.charList {
-		tp.nonSpacePrefix[index+1] = tp.nonSpacePrefix[index]
-		if ci.unicode != ' ' {
-			tp.nonSpacePrefix[index+1]++
-		}
-		lo, hi, ok := verticalBands(ci.charBox, charBandHeight)
-		if !ok || hi-lo > maxCharBandSpan {
-			tp.charBandsWide = append(tp.charBandsWide, index)
-			continue
-		}
-		for band := lo; band <= hi; band++ {
-			tp.charBands[band] = append(tp.charBands[band], index)
-		}
-	}
-}
-
 const (
 	charBandHeight  = float32(32)
 	maxCharBandSpan = 4096
@@ -1326,46 +1297,6 @@ func overlapFractions(box, charBox crt.FloatRect) (v, h float32, ok bool) {
 		return 0, 0, false
 	}
 	return overlap.Height() / height, overlap.Width() / width, true
-}
-
-// GetTextByRectClaiming returns the text inside box like GetTextByRect, but
-// CONSUMES characters: a character whose index is already set in claimed is
-// skipped, and every character this call emits is marked. Sequential callers
-// sharing one claimed slice therefore partition the page's characters, so a
-// glyph whose box straddles two query regions (big-operator limits and
-// sub/superscripts routinely overlap the neighbouring line's rect) is emitted
-// exactly once instead of into both.
-func (tp *TextPage) GetTextByRectClaiming(box crt.FloatRect, claimed []bool) string {
-	tp.ensureCharBands()
-
-	candidates := tp.charBandsWide
-	lo, hi, ok := verticalBands(box, charBandHeight)
-	if !ok || hi-lo > maxCharBandSpan {
-		candidates = make([]int, len(tp.charList))
-		for index := range tp.charList {
-			candidates[index] = index
-		}
-	} else {
-		for band := lo; band <= hi; band++ {
-			candidates = append(candidates, tp.charBands[band]...)
-		}
-	}
-
-	selected := make([]int, 0, len(candidates))
-	for _, index := range candidates {
-		if index >= len(claimed) || claimed[index] {
-			continue
-		}
-		if !isRectIntersect(box, tp.charList[index].charBox) {
-			continue
-		}
-		claimed[index] = true
-		selected = append(selected, index)
-	}
-	// A character can land in several bands, and the wide list is scanned
-	// alongside them, so restore stored (reading) order before emitting.
-	sort.Ints(selected)
-	return tp.textFromSelectedIndices(selected, tp.nonSpacePrefix)
 }
 
 // getTextByPredicate ports GetTextByPredicate (523).

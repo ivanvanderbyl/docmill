@@ -185,45 +185,5 @@ func TestSingleRuleUnderCaptionIsNotFigureRegion(t *testing.T) {
 	require.Empty(t, figureRegions(cells, rulings, size))
 }
 
-// --- exclusive re-extraction ---
-
-// With ExclusiveReextract the re-extractor is authoritative for every group,
-// including single-cell ones, and a group it returns empty for is dropped
-// rather than falling back to the member text (which would duplicate glyphs
-// already claimed by an earlier cell).
-func TestMergeFragmentedCellsExclusiveReextractDropsClaimedGroups(t *testing.T) {
-	t.Parallel()
-
-	cells := []page.TextCell{
-		structureTestCell(1, "first", 0, 0, 40, 10),
-		structureTestCell(2, "second", 200, 0, 260, 10),
-	}
-	claimed := false
-	reextract := func(geom.Box) string {
-		if claimed {
-			return ""
-		}
-		claimed = true
-		return "first"
-	}
-
-	merged := MergeFragmentedCells(cells, reextract, MergeOptions{ExclusiveReextract: true})
-	require.Len(t, merged, 1)
-	require.Equal(t, "first", merged[0].Text)
-}
-
-// NEGATIVE: without the flag, an empty re-extraction still falls back to the
-// member cells' own text and no cell is dropped.
-func TestMergeFragmentedCellsNonExclusiveKeepsFallbackText(t *testing.T) {
-	t.Parallel()
-
-	cells := []page.TextCell{
-		structureTestCell(1, "first", 0, 0, 40, 10),
-		structureTestCell(2, "second", 200, 0, 260, 10),
-	}
-
-	merged := MergeFragmentedCells(cells, func(geom.Box) string { return "" }, MergeOptions{})
-	require.Len(t, merged, 2)
-	require.Equal(t, "first", merged[0].Text)
-	require.Equal(t, "second", merged[1].Text)
-}
+// (Exclusive re-extraction semantics are covered in cells_exclusive_test.go
+// against the batched MergeFragmentedCellsExclusive API.)
