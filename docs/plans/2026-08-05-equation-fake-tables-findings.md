@@ -58,3 +58,48 @@ continuation slots blank.
 The header of Table I ("GAIN | ENTROPY POWER FACTOR | ...") sits above the
 detected table box and is consumed by heading detection instead, producing the
 two false `#` headings.
+
+---
+
+# Results (post-fix, commit on ivan/equation-fake-tables)
+
+## entropy.pdf (Task 6)
+
+| Metric | Before | After |
+|---|---|---|
+| Table blocks | 19 | 8 |
+| Pipe rows | 121 | 44 |
+| Duplicated consecutive rows | many | 0 |
+
+Surviving blocks: 4 real (page-6 probability tables, both page-18 code
+tables, page-40 Table I — each row exactly once) and 4 residual fakes
+(page-27 "C = log3", page-29 "m/A(t)", page-53 pair). The residual fakes are
+small stacked-fraction equation grids whose numerals align in genuine columns
+with real whitespace gutters — at line-cell granularity they are geometrically
+indistinguishable from small aligned tables, so the gutter-persistence gate
+correctly declines to fire. Killing them would need a sub-line/baseline-stack
+signal that also fires on the REAL page-6 table (its cells are stacked
+fractions too); measured and rejected as unsafe.
+
+Page numbers previously swallowed into tables/equations (pages 3, 27, 50) now
+emit as standalone marginal blocks, matching the document's existing
+convention (53 baseline / 54 after).
+
+## DPBench 200-PDF corpus (Task 7)
+
+| Metric | Baseline (513c968) | Current | Delta |
+|---|---|---|---|
+| table_structure_teds | 0.763126 | 0.765178 | +0.002052 |
+| extraction_accuracy | 0.921572 | 0.921965 | +0.000392 |
+| reading_order_nid | 0.893762 | 0.893486 | -0.000275 |
+| heading_level_mhs | 0.770814 | 0.770814 | 0 |
+| errors | 0 | 0 | 0 |
+| cases | 200 | 200 | 0 |
+
+Only 7 of 200 cases changed. The aggregate reading-order dip comes from 3
+cases where the SAME change produced a larger table/extraction win — e.g.
+doc_a5b975 (TEDS 0 → 1: a display-equation fake grid released to prose;
+NID -0.0153) and doc_c4416f (TEDS +0.1165, extraction +0.0095, NID -0.0384).
+No case regressed without a larger compensating improvement on the same
+document. milliseconds_per_page measured under concurrent load (3 other
+agents); not meaningful per the task brief.
