@@ -17,15 +17,6 @@ type MergeOptions struct {
 	// VerticalThresholdFactor groups cells onto the same row when their top and
 	// bottom edges are within this factor times the row height (default 0.5).
 	VerticalThresholdFactor float64
-	// ExclusiveReextract marks reextract as CONSUMING: every group — including
-	// single-cell groups — is re-read through it in processing order, an empty
-	// result is authoritative (that region's characters were already claimed by
-	// an earlier cell, so falling back to the member texts would duplicate
-	// them), and cells left with no text are dropped. Rect queries alone cannot
-	// give this guarantee: a glyph whose box straddles two regions (big-operator
-	// limits, sub/superscripts crossing line rects) is otherwise emitted into
-	// both.
-	ExclusiveReextract bool
 }
 
 func (o MergeOptions) withDefaults() MergeOptions {
@@ -38,37 +29,51 @@ func (o MergeOptions) withDefaults() MergeOptions {
 	return o
 }
 
-// MergeFragmentedCells de-fragments raw PDF text cells into line-level cells,
-// mirroring Docling's merge_horizontal_cells (pypdfium2 backend). PDFium emits
-// many sub-word rects in some documents; this groups them into rows by vertical
-// proximity and merges horizontally-adjacent rects within a row into a single
-// cell.
-//
-// Cells are processed in their incoming (reading) order. reextract, if non-nil,
-// returns the text for a merged cell's box (top-left origin) — pass the backend's
-// bounded-text lookup so spacing matches the document, exactly as Docling
-// re-reads the merged region. When reextract is nil or returns empty, the member
-// cells' texts are joined with a single space. Returned cells are re-indexed
-// 0..n-1 in order.
-func MergeFragmentedCells(cells []page.TextCell, reextract func(geom.Box) string, options MergeOptions) []page.TextCell {
+// MergeFragmentedCellsExclusive de-fragments raw PDF text cells into
+// line-level cells, mirroring Docling's merge_horizontal_cells (pypdfium2
+// backend): cells are grouped into rows by vertical proximity and
+// horizontally-adjacent cells within a row merge into one cell. Every merged
+// group is then re-read in ONE batched call: reextractAll receives every
+// group's enclosing box (top-left origin, in processing order) and returns
+// one text per box. Handing the extractor the complete set of boxes lets it
+// partition the page's characters by best overlap instead of
+// first-query-wins — a tall math delimiter's box that merely grazes glyphs
+// of a neighbouring prose line cannot steal them from that line's own query,
+// and a glyph straddling two regions (big-operator limits, sub/superscripts
+// crossing line rects) is still emitted exactly once. The extractor is
+// authoritative: a group whose text comes back empty was claimed by
+// better-overlapping groups and is dropped. Returned cells are re-indexed
+// 0..n-1.
+func MergeFragmentedCellsExclusive(cells []page.TextCell, reextractAll func([]geom.Box) []string, options MergeOptions) []page.TextCell {
 	options = options.withDefaults()
 	if len(cells) == 0 {
 		return nil
 	}
 
-	merged := make([]page.TextCell, 0, len(cells))
+	var groups [][]page.TextCell
 	for _, row := range groupCellRows(cells, options.VerticalThresholdFactor) {
-		merged = append(merged, mergeCellRow(row, options.HorizontalThresholdFactor, reextract, options.ExclusiveReextract)...)
+		groups = append(groups, splitCellRowGroups(row, options.HorizontalThresholdFactor)...)
 	}
-	if options.ExclusiveReextract && reextract != nil {
-		kept := merged[:0]
-		for _, cell := range merged {
-			if strings.TrimSpace(cell.Text) == "" {
-				continue
-			}
-			kept = append(kept, cell)
+
+	shells := make([]page.TextCell, len(groups))
+	boxes := make([]geom.Box, len(groups))
+	for i, group := range groups {
+		shells[i] = mergeCellShell(group)
+		boxes[i] = shells[i].Box
+	}
+
+	texts := reextractAll(boxes)
+	merged := make([]page.TextCell, 0, len(groups))
+	for i, shell := range shells {
+		text := ""
+		if i < len(texts) {
+			text = strings.TrimSpace(texts[i])
 		}
-		merged = kept
+		if text == "" {
+			continue
+		}
+		shell.Text = text
+		merged = append(merged, shell)
 	}
 	for index := range merged {
 		merged[index].Index = index
@@ -100,8 +105,11 @@ func groupCellRows(cells []page.TextCell, verticalFactor float64) [][]page.TextC
 	return rows
 }
 
-func mergeCellRow(row []page.TextCell, horizontalFactor float64, reextract func(geom.Box) string, exclusive bool) []page.TextCell {
-	merged := make([]page.TextCell, 0, len(row))
+// splitCellRowGroups splits a vertical row into horizontally-contiguous merge
+// groups: adjacent cells stay in one group while the gap between them is at
+// most horizontalFactor times their average height.
+func splitCellRowGroups(row []page.TextCell, horizontalFactor float64) [][]page.TextCell {
+	groups := make([][]page.TextCell, 0, 1)
 	group := []page.TextCell{row[0]}
 
 	for _, cell := range row[1:] {
@@ -111,20 +119,16 @@ func mergeCellRow(row []page.TextCell, horizontalFactor float64, reextract func(
 			group = append(group, cell)
 			continue
 		}
-		merged = append(merged, mergeCellGroup(group, reextract, exclusive))
+		groups = append(groups, group)
 		group = []page.TextCell{cell}
 	}
-	merged = append(merged, mergeCellGroup(group, reextract, exclusive))
-	return merged
+	return append(groups, group)
 }
 
-func mergeCellGroup(group []page.TextCell, reextract func(geom.Box) string, exclusive bool) page.TextCell {
+// mergeCellShell unions a group's geometry and font metadata into one cell,
+// leaving Text as the first member's (callers overwrite it).
+func mergeCellShell(group []page.TextCell) page.TextCell {
 	if len(group) == 1 {
-		if exclusive && reextract != nil {
-			cell := group[0]
-			cell.Text = strings.TrimSpace(reextract(cell.Box))
-			return cell
-		}
 		return group[0]
 	}
 
@@ -151,23 +155,9 @@ func mergeCellGroup(group []page.TextCell, reextract func(geom.Box) string, excl
 	}
 	box.Origin = geom.TopLeft
 
-	text := ""
-	if reextract != nil {
-		text = strings.TrimSpace(reextract(box))
-	}
-	if text == "" && !(exclusive && reextract != nil) {
-		parts := make([]string, 0, len(group))
-		for _, cell := range group {
-			if trimmed := strings.TrimSpace(cell.Text); trimmed != "" {
-				parts = append(parts, trimmed)
-			}
-		}
-		text = strings.Join(parts, " ")
-	}
-
 	return page.TextCell{
 		Index:      group[0].Index,
-		Text:       text,
+		Text:       group[0].Text,
 		FontSize:   fontSize,
 		FontName:   fontName,
 		FontWeight: fontWeight,

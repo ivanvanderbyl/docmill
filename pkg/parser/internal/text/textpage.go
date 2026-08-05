@@ -128,13 +128,6 @@ type TextPage struct {
 	curlineRect  crt.FloatRect
 
 	selRects []crt.FloatRect // cached by CountRects, read by GetRect
-
-	// Lazily-built vertical band index over charList, plus the non-space
-	// prefix sums both band-indexed readers need. See ensureCharBands.
-	charBands      map[int][]int
-	charBandsWide  []int // chars whose box spans too many bands to index
-	nonSpacePrefix []int
-	charBandsReady bool
 }
 
 // New ports CPDF_TextPage(page, rtl): capture the display matrix BEFORE Init

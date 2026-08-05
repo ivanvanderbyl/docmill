@@ -52,8 +52,35 @@ func AssembleLineElements(cells []page.TextCell, lineTolerance float64) []Paragr
 
 // clusterParagraphTextLines clusters non-empty cells into horizontal visual
 // lines by vertical centre (within lineTolerance), returning ParagraphTextLines
-// top-to-bottom with their text joined left-to-right.
+// top-to-bottom with their text joined left-to-right. Lines whose band was
+// bridged by tall outlier glyphs are re-split into their distinct baselines
+// (see splitTallBridgedGroup).
 func clusterParagraphTextLines(cells []page.TextCell, lineTolerance float64) []ParagraphTextLine {
+	visible := make([]page.TextCell, 0, len(cells))
+	for _, cell := range cells {
+		if strings.TrimSpace(cell.Text) == "" {
+			continue
+		}
+		visible = append(visible, cell)
+	}
+	if len(visible) == 0 {
+		return nil
+	}
+
+	var lines []ParagraphTextLine
+	for _, group := range clusterCellsByCentre(visible, lineTolerance) {
+		for _, split := range splitTallBridgedGroup(group, lineTolerance) {
+			lines = append(lines, buildParagraphTextLine(split))
+		}
+	}
+
+	return foldStackedFragmentLines(mergeInlineFragmentLines(lines))
+}
+
+// clusterCellsByCentre performs the visual-line walk: cells sorted by vertical
+// centre accumulate into a line while sameVisualLine accepts them against the
+// line's growing band. Returns the cell groups in top-to-bottom order.
+func clusterCellsByCentre(cells []page.TextCell, lineTolerance float64) [][]page.TextCell {
 	type sortableCell struct {
 		cell   page.TextCell
 		center float64
@@ -61,9 +88,6 @@ func clusterParagraphTextLines(cells []page.TextCell, lineTolerance float64) []P
 
 	sortable := make([]sortableCell, 0, len(cells))
 	for _, cell := range cells {
-		if strings.TrimSpace(cell.Text) == "" {
-			continue
-		}
 		sortable = append(sortable, sortableCell{
 			cell:   cell,
 			center: (cell.Box.T + cell.Box.B) / 2,
@@ -80,7 +104,7 @@ func clusterParagraphTextLines(cells []page.TextCell, lineTolerance float64) []P
 		return sortable[i].cell.Box.L < sortable[j].cell.Box.L
 	})
 
-	var lines []ParagraphTextLine
+	var groups [][]page.TextCell
 	var current []page.TextCell
 	lineCenter := sortable[0].center
 	lineTop := math.Min(sortable[0].cell.Box.T, sortable[0].cell.Box.B)
@@ -90,7 +114,7 @@ func clusterParagraphTextLines(cells []page.TextCell, lineTolerance float64) []P
 		if len(current) == 0 {
 			return
 		}
-		lines = append(lines, buildParagraphTextLine(current))
+		groups = append(groups, current)
 		current = nil
 	}
 
@@ -119,7 +143,99 @@ func clusterParagraphTextLines(cells []page.TextCell, lineTolerance float64) []P
 	}
 	flush()
 
-	return mergeInlineFragmentLines(lines)
+	return groups
+}
+
+// tallOutlierFactor classifies a cell as a tall outlier within a clustered
+// line when its box is more than this factor times the line's median cell
+// height. Big math delimiters, radicals and integral signs carry boxes 2-3x
+// taller than their text band; legitimate same-line cells (sub/superscripts,
+// footnote markers, mixed font sizes) stay well under it.
+const tallOutlierFactor = 1.6
+
+// splitTallBridgedGroup re-splits a clustered visual line whose vertical band
+// was bridged by tall outlier glyphs. Big math delimiters reach through
+// neighbouring lines, inflating the band until the walk's overlap fallback
+// absorbs a second baseline; ordering the union left-to-right then interleaves
+// equation glyphs with prose. The group's dominant-height cells are
+// re-clustered on their own: if they form two or more distinct baselines the
+// group splits, and each tall outlier joins the baseline cluster its box
+// overlaps best. Full-cover ties resolve by top-edge proximity: a tall
+// delimiter's box top starts at the band of the line it is anchored to and
+// dangles down through whatever lies beneath, so of two fully-covered bands
+// the one nearest the outlier's top is its anchor. A group whose dominant
+// cells share one baseline is returned unchanged, so tall delimiters inside a
+// single line (inline math) stay with their line.
+//
+// Invariant encoded: a visual text line's extent is defined by its dominant
+// glyph band; oversized decoration must never fuse two distinct baselines
+// into one line.
+func splitTallBridgedGroup(group []page.TextCell, lineTolerance float64) [][]page.TextCell {
+	if len(group) < 3 {
+		return [][]page.TextCell{group}
+	}
+
+	heights := make([]float64, 0, len(group))
+	for _, cell := range group {
+		heights = append(heights, cell.Box.Height())
+	}
+	sort.Float64s(heights)
+	median := heights[(len(heights)-1)/2]
+	if median <= 0 {
+		return [][]page.TextCell{group}
+	}
+
+	var normals, outliers []page.TextCell
+	for _, cell := range group {
+		if cell.Box.Height() > tallOutlierFactor*median {
+			outliers = append(outliers, cell)
+		} else {
+			normals = append(normals, cell)
+		}
+	}
+	if len(outliers) == 0 || len(normals) < 2 {
+		return [][]page.TextCell{group}
+	}
+
+	clusters := clusterCellsByCentre(normals, lineTolerance)
+	if len(clusters) < 2 {
+		return [][]page.TextCell{group}
+	}
+
+	type band struct{ top, bottom float64 }
+	bands := make([]band, len(clusters))
+	for i, cluster := range clusters {
+		top := math.Min(cluster[0].Box.T, cluster[0].Box.B)
+		bottom := math.Max(cluster[0].Box.T, cluster[0].Box.B)
+		for _, cell := range cluster[1:] {
+			top = math.Min(top, math.Min(cell.Box.T, cell.Box.B))
+			bottom = math.Max(bottom, math.Max(cell.Box.T, cell.Box.B))
+		}
+		bands[i] = band{top: top, bottom: bottom}
+	}
+
+	for _, outlier := range outliers {
+		top := math.Min(outlier.Box.T, outlier.Box.B)
+		bottom := math.Max(outlier.Box.T, outlier.Box.B)
+		best := 0
+		bestFraction := -1.0
+		bestTopDistance := math.Inf(1)
+		for i, b := range bands {
+			height := b.bottom - b.top
+			if height <= 0 {
+				continue
+			}
+			fraction := (math.Min(b.bottom, bottom) - math.Max(b.top, top)) / height
+			topDistance := math.Abs(top - b.top)
+			if fraction > bestFraction+1e-9 ||
+				(math.Abs(fraction-bestFraction) <= 1e-9 && topDistance < bestTopDistance) {
+				best, bestFraction, bestTopDistance = i, fraction, topDistance
+			}
+		}
+		clusters[best] = append(clusters[best], outlier)
+	}
+
+	return clusters
 }
 
 // buildParagraphTextLine sorts cells left-to-right, joins their trimmed texts
@@ -127,9 +243,7 @@ func clusterParagraphTextLines(cells []page.TextCell, lineTolerance float64) []P
 // index and list-marker hints, and populates the LineElement run model
 // (Words/Elements) so downstream inline-formatting consumers see the same line.
 func buildParagraphTextLine(cells []page.TextCell) ParagraphTextLine {
-	sort.SliceStable(cells, func(i, j int) bool {
-		return cells[i].Box.L < cells[j].Box.L
-	})
+	orderCellsForReading(cells)
 
 	boxes := make([]geom.Box, 0, len(cells))
 	minIndex := cells[0].Index
@@ -160,6 +274,193 @@ func buildParagraphTextLine(cells []page.TextCell) ParagraphTextLine {
 		ListCandidate: listCandidate,
 		ListContentL:  listContentL,
 	}
+}
+
+// orderCellsForReading sorts a line's cells into reading order: columns
+// left-to-right, and within a column top-to-bottom, so a fraction's numerator
+// reads before its denominator at the stack's x-position. Column membership
+// is assigned up front by a single left-to-right sweep — a cell joins the
+// current column when it overlaps the column's x-extent by at least half the
+// narrower width, otherwise it starts the next column — and the final sort
+// key is (column, top, left, index). Pre-assigned keys give a total order; a
+// pairwise left-vs-stacked comparator is not transitive over the overlapping
+// geometry stacks create and can produce cycles. Ordinary neighbouring cells
+// abut with at most sliver overlaps, so each gets its own column and the
+// order degenerates to plain left-to-right.
+func orderCellsForReading(cells []page.TextCell) {
+	if len(cells) < 2 {
+		return
+	}
+	sort.SliceStable(cells, func(i, j int) bool {
+		if cells[i].Box.L != cells[j].Box.L {
+			return cells[i].Box.L < cells[j].Box.L
+		}
+		return cellBoxTop(cells[i]) < cellBoxTop(cells[j])
+	})
+
+	columns := make([]int, len(cells))
+	column := 0
+	extentL, extentR := cells[0].Box.L, cells[0].Box.R
+	for i := 1; i < len(cells); i++ {
+		box := cells[i].Box
+		overlap := math.Min(extentR, box.R) - box.L // cells sorted by L, so box.L >= extentL
+		minWidth := math.Min(extentR-extentL, box.R-box.L)
+		if minWidth > 0 && overlap >= 0.5*minWidth {
+			extentR = math.Max(extentR, box.R)
+		} else {
+			column++
+			extentL, extentR = box.L, box.R
+		}
+		columns[i] = column
+	}
+
+	indices := make([]int, len(cells))
+	for i := range indices {
+		indices[i] = i
+	}
+	sort.SliceStable(indices, func(i, j int) bool {
+		a, b := indices[i], indices[j]
+		if columns[a] != columns[b] {
+			return columns[a] < columns[b]
+		}
+		aTop, bTop := cellBoxTop(cells[a]), cellBoxTop(cells[b])
+		if aTop != bTop {
+			return aTop < bTop
+		}
+		if cells[a].Box.L != cells[b].Box.L {
+			return cells[a].Box.L < cells[b].Box.L
+		}
+		return a < b
+	})
+	ordered := make([]page.TextCell, len(cells))
+	for i, index := range indices {
+		ordered[i] = cells[index]
+	}
+	copy(cells, ordered)
+}
+
+func cellBoxTop(cell page.TextCell) float64 {
+	return math.Min(cell.Box.T, cell.Box.B)
+}
+
+// foldStackedFragmentLines inlines fraction-style stacks. An inline stacked
+// construct (fraction, stacked sub/superscript column) leaves its raised and
+// lowered parts as small fragment lines above/below the prose line, inside
+// the horizontal gap the construct occupies in that line's text. Such a
+// fragment — a few cells, vertically interpenetrating a neighbour line, every
+// cell fitting inside an interior gap between that line's cells — is folded
+// into the line at its x-position; cellReadingLess then reads column mates
+// top-to-bottom. Ordinary short lines never qualify: stacked prose lines do
+// not vertically overlap, and a line-initial or line-final cell is not inside
+// an interior gap.
+func foldStackedFragmentLines(lines []ParagraphTextLine) []ParagraphTextLine {
+	if len(lines) < 2 {
+		return lines
+	}
+	// A single stacked construct sheds at most a numerator or denominator
+	// plus its wrapping delimiter glyphs onto one residue line — 1-3 cells in
+	// every measured construct. Anything wider is an independent visual line
+	// (a table row, a prose line) and must never be folded.
+	const maxStackFragmentCells = 3
+	out := make([]ParagraphTextLine, 0, len(lines))
+	for i := range lines {
+		line := lines[i]
+		if len(line.Cells) <= maxStackFragmentCells {
+			if len(out) > 0 && stackedFragmentLineFits(line, out[len(out)-1]) {
+				merged := append(append([]page.TextCell(nil), out[len(out)-1].Cells...), line.Cells...)
+				out[len(out)-1] = buildParagraphTextLine(merged)
+				continue
+			}
+			if i+1 < len(lines) && stackedFragmentLineFits(line, lines[i+1]) {
+				merged := append(append([]page.TextCell(nil), lines[i+1].Cells...), line.Cells...)
+				lines[i+1] = buildParagraphTextLine(merged)
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// stackedFragmentLineFits reports whether every cell of the fragment line
+// slots into the target line as part of an inline stack.
+func stackedFragmentLineFits(fragment, target ParagraphTextLine) bool {
+	if len(fragment.Cells) == 0 {
+		return false
+	}
+	for _, cell := range fragment.Cells {
+		if !stackedFragmentFitsGap(cell, target) {
+			return false
+		}
+	}
+	return true
+}
+
+// stackInterpenetrationMin is the minimum fraction of the smaller of the two
+// heights by which a stacked fragment's box must overlap the band of EACH
+// cell flanking its gap. Measured inline stacks dip 25-56% of a glyph height
+// into their line's text band; separate rows overlap their upper neighbours'
+// text bands not at all (line spacing keeps bands apart even when one
+// oversized box makes the lines' box UNIONS touch).
+const stackInterpenetrationMin = 0.2
+
+// stackedFragmentFitsGap reports whether cell is the raised or lowered part of
+// an inline stack in target. Horizontally it must fit inside one interior gap
+// of the target's cells: cells it would stack with (substantial x-overlap)
+// are ignored, any other x-overlap disqualifies, and a target cell must lie
+// fully on each side so marginalia and line-initial fragments never fold.
+// Vertically it must interpenetrate the TEXT band of both cells flanking that
+// gap by stackInterpenetrationMin — a stacked construct hangs into the band
+// of the words around it, while a table row beneath never overlaps the band
+// of the specific cells around its column position. Judging against the
+// flanking cells' own boxes (never the line's box union) keeps one oversized
+// cell elsewhere in the line from opening the gate.
+func stackedFragmentFitsGap(cell page.TextCell, target ParagraphTextLine) bool {
+	if len(target.Cells) < 2 {
+		return false
+	}
+	// Sub-glyph abutment tolerance for x-fit tests: adjacent PDF glyph boxes
+	// routinely overlap by fractions of a point of coordinate jitter.
+	const slack = 0.5
+	width := cell.Box.R - cell.Box.L
+	if width <= 0 {
+		return false
+	}
+	var left, right *page.TextCell
+	for i := range target.Cells {
+		tc := &target.Cells[i]
+		overlap := math.Min(cell.Box.R, tc.Box.R) - math.Max(cell.Box.L, tc.Box.L)
+		minWidth := math.Min(width, tc.Box.R-tc.Box.L)
+		if minWidth > 0 && overlap >= 0.5*minWidth {
+			continue // column mate — the fragment stacks with it in place
+		}
+		if overlap > slack {
+			return false // would cut into a foreign cell's span
+		}
+		if tc.Box.R <= cell.Box.L+slack && (left == nil || tc.Box.R > left.Box.R) {
+			left = tc
+		}
+		if tc.Box.L >= cell.Box.R-slack && (right == nil || tc.Box.L < right.Box.L) {
+			right = tc
+		}
+	}
+	if left == nil || right == nil {
+		return false
+	}
+	return fragmentInterpenetratesBand(cell, *left) && fragmentInterpenetratesBand(cell, *right)
+}
+
+// fragmentInterpenetratesBand reports whether the fragment's box overlaps the
+// flanking cell's band by at least stackInterpenetrationMin of the smaller
+// height.
+func fragmentInterpenetratesBand(cell, flank page.TextCell) bool {
+	top := cellBoxTop(cell)
+	bottom := math.Max(cell.Box.T, cell.Box.B)
+	flankTop := cellBoxTop(flank)
+	flankBottom := math.Max(flank.Box.T, flank.Box.B)
+	overlap := math.Min(bottom, flankBottom) - math.Max(top, flankTop)
+	minHeight := math.Min(bottom-top, flankBottom-flankTop)
+	return minHeight > 0 && overlap >= stackInterpenetrationMin*minHeight
 }
 
 // sameVisualLine reports whether a cell belongs on the line currently being
@@ -256,7 +557,7 @@ func inlineFragmentBelongsToLine(fragment, line ParagraphTextLine) bool {
 // formatting.
 func lineWords(cells []page.TextCell) []TextLineWord {
 	ordered := append([]page.TextCell(nil), cells...)
-	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Box.L < ordered[j].Box.L })
+	orderCellsForReading(ordered)
 	words := make([]TextLineWord, 0, len(ordered))
 	for _, c := range ordered {
 		text := strings.TrimSpace(c.Text)

@@ -5,7 +5,6 @@ package text
 
 import (
 	"math"
-	"sort"
 	"unicode"
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/crt"
@@ -1177,77 +1176,127 @@ func (tp *TextPage) textFromSelectedIndices(indices, nonSpacePrefix []int) strin
 	return string(text)
 }
 
-// ensureCharBands builds the vertical band index over charList (and the
-// non-space prefix sums) once per page. Band-indexed readers visit only the
-// characters that can overlap a query box instead of the whole page stream,
-// which is what keeps a per-cell re-extraction pass linear in the page rather
-// than quadratic.
-func (tp *TextPage) ensureCharBands() {
-	if tp.charBandsReady {
-		return
-	}
-	tp.charBandsReady = true
-	tp.charBands = make(map[int][]int)
-	tp.nonSpacePrefix = make([]int, len(tp.charList)+1)
-	for index, ci := range tp.charList {
-		tp.nonSpacePrefix[index+1] = tp.nonSpacePrefix[index]
-		if ci.unicode != ' ' {
-			tp.nonSpacePrefix[index+1]++
-		}
-		lo, hi, ok := verticalBands(ci.charBox, charBandHeight)
-		if !ok || hi-lo > maxCharBandSpan {
-			tp.charBandsWide = append(tp.charBandsWide, index)
-			continue
-		}
-		for band := lo; band <= hi; band++ {
-			tp.charBands[band] = append(tp.charBands[band], index)
-		}
-	}
-}
-
 const (
 	charBandHeight  = float32(32)
 	maxCharBandSpan = 4096
 )
 
-// GetTextByRectClaiming returns the text inside box like GetTextByRect, but
-// CONSUMES characters: a character whose index is already set in claimed is
-// skipped, and every character this call emits is marked. Sequential callers
-// sharing one claimed slice therefore partition the page's characters, so a
-// glyph whose box straddles two query regions (big-operator limits and
-// sub/superscripts routinely overlap the neighbouring line's rect) is emitted
-// exactly once instead of into both.
-func (tp *TextPage) GetTextByRectClaiming(box crt.FloatRect, claimed []bool) string {
-	tp.ensureCharBands()
+// GetTextByRectsExclusive partitions the page's characters across boxes and
+// returns each box's text: every character intersecting at least one box is
+// emitted into exactly one — the box covering the greatest vertical fraction
+// of its glyph box (ties: greatest horizontal fraction, then nearest vertical
+// centre, then earliest box). The centre tie-break settles full double
+// containment: an ascender glyph sits entirely inside both its own line's
+// rect and an oversized delimiter box reaching through the line, but the line
+// rect's centre is at the glyph while the delimiter's is a row away.
+//
+// This replaces sequential first-query-wins claiming for the cell-merge pass.
+// A query box that grossly overshoots its visual row — big math delimiters
+// carry rects 2-3x taller than their line, reaching through the neighbouring
+// prose line — could claim glyphs sitting squarely on that other row which it
+// merely grazed, deleting letters from the row's own later query (entropy.pdf
+// p22: the big "(" claimed the 'e' of "possible"). Scoring every candidate
+// box per character makes ownership order-independent: a glyph stays with the
+// row rect that covers it best, and a straddling glyph (sub/superscripts,
+// big-operator limits crossing line rects) is still emitted exactly once.
+func (tp *TextPage) GetTextByRectsExclusive(boxes []crt.FloatRect) []string {
+	texts := make([]string, len(boxes))
+	if len(boxes) == 0 || len(tp.charList) == 0 {
+		return texts
+	}
 
-	candidates := tp.charBandsWide
-	lo, hi, ok := verticalBands(box, charBandHeight)
-	if !ok || hi-lo > maxCharBandSpan {
-		candidates = make([]int, len(tp.charList))
-		for index := range tp.charList {
-			candidates[index] = index
+	const bandHeight = charBandHeight
+	bands := make(map[int][]int)
+	var fallback []int
+	for index, box := range boxes {
+		lo, hi, ok := verticalBands(box, bandHeight)
+		if !ok || hi-lo > maxCharBandSpan {
+			fallback = append(fallback, index)
+			continue
 		}
-	} else {
 		for band := lo; band <= hi; band++ {
-			candidates = append(candidates, tp.charBands[band]...)
+			bands[band] = append(bands[band], index)
 		}
 	}
 
-	selected := make([]int, 0, len(candidates))
-	for _, index := range candidates {
-		if index >= len(claimed) || claimed[index] {
-			continue
+	selected := make([][]int, len(boxes))
+	seen := make([]int, len(boxes))
+	generation := 0
+	for charIndex, ci := range tp.charList {
+		generation++
+		candidates := fallback
+		lo, hi, ok := verticalBands(ci.charBox, bandHeight)
+		if !ok || hi-lo > maxCharBandSpan {
+			candidates = make([]int, len(boxes))
+			for index := range boxes {
+				candidates[index] = index
+			}
+		} else {
+			for band := lo; band <= hi; band++ {
+				candidates = append(candidates, bands[band]...)
+			}
 		}
-		if !isRectIntersect(box, tp.charList[index].charBox) {
-			continue
+		best := -1
+		var bestV, bestH, bestDist float32
+		for _, boxIndex := range candidates {
+			if seen[boxIndex] == generation {
+				continue
+			}
+			seen[boxIndex] = generation
+			v, h, ok := overlapFractions(boxes[boxIndex], ci.charBox)
+			if !ok {
+				continue
+			}
+			dist := verticalCenterDistance(boxes[boxIndex], ci.charBox)
+			if best == -1 || v > bestV || (v == bestV && (h > bestH ||
+				(h == bestH && (dist < bestDist ||
+					(dist == bestDist && boxIndex < best))))) {
+				best, bestV, bestH, bestDist = boxIndex, v, h, dist
+			}
 		}
-		claimed[index] = true
-		selected = append(selected, index)
+		if best >= 0 {
+			selected[best] = append(selected[best], charIndex)
+		}
 	}
-	// A character can land in several bands, and the wide list is scanned
-	// alongside them, so restore stored (reading) order before emitting.
-	sort.Ints(selected)
-	return tp.textFromSelectedIndices(selected, tp.nonSpacePrefix)
+
+	nonSpacePrefix := make([]int, len(tp.charList)+1)
+	for index, ci := range tp.charList {
+		nonSpacePrefix[index+1] = nonSpacePrefix[index]
+		if ci.unicode != ' ' {
+			nonSpacePrefix[index+1]++
+		}
+	}
+	for index, indices := range selected {
+		texts[index] = tp.textFromSelectedIndices(indices, nonSpacePrefix)
+	}
+	return texts
+}
+
+// verticalCenterDistance is the distance between the vertical centres of the
+// query box and the char box.
+func verticalCenterDistance(box, charBox crt.FloatRect) float32 {
+	box.Normalize()
+	charBox.Normalize()
+	return absf((box.Top+box.Bottom)/2 - (charBox.Top+charBox.Bottom)/2)
+}
+
+// overlapFractions reports how much of charBox the query box covers, as the
+// fraction of the char's height and width, requiring genuine intersection
+// (matching isRectIntersect's positive-area rule). Degenerate zero-area char
+// boxes — generated spaces — never intersect, exactly as in the other readers.
+func overlapFractions(box, charBox crt.FloatRect) (v, h float32, ok bool) {
+	overlap := box
+	overlap.Intersect(charBox)
+	if overlap.IsEmpty() {
+		return 0, 0, false
+	}
+	charBox.Normalize()
+	height := charBox.Height()
+	width := charBox.Width()
+	if height <= 0 || width <= 0 {
+		return 0, 0, false
+	}
+	return overlap.Height() / height, overlap.Width() / width, true
 }
 
 // getTextByPredicate ports GetTextByPredicate (523).

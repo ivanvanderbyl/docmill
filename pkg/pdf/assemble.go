@@ -63,6 +63,12 @@ func joinLineCellTexts(cells []page.TextCell) string {
 func shouldSeparateLineCells(cells []page.TextCell, index int) bool {
 	current := cells[index]
 	previous := cells[index-1]
+	if cellsStackVertically(previous, current) {
+		// A fraction's numerator/denominator (or a stacked script column)
+		// share an x-span with no vertical overlap: distinct tokens, never a
+		// split word, so the zero horizontal gap must not compact them.
+		return true
+	}
 	if isStandaloneHyphenText(current.Text) && index+1 < len(cells) && shouldCompactStandaloneHyphen(previous, current, cells[index+1]) {
 		return false
 	}
@@ -85,6 +91,20 @@ func shouldSeparateLineCells(cells []page.TextCell, index int) bool {
 		return false
 	}
 	return true
+}
+
+// cellsStackVertically reports whether two same-line cells occupy one column
+// (substantial x-overlap) on separate bands (little to no y-overlap) — the
+// shape of a fraction's numerator over its denominator or a stacked script.
+func cellsStackVertically(a, b page.TextCell) bool {
+	xOverlap := math.Min(a.Box.R, b.Box.R) - math.Max(a.Box.L, b.Box.L)
+	minWidth := math.Min(a.Box.R-a.Box.L, b.Box.R-b.Box.L)
+	if minWidth <= 0 || xOverlap < 0.5*minWidth {
+		return false
+	}
+	yOverlap := math.Min(a.Box.B, b.Box.B) - math.Max(a.Box.T, b.Box.T)
+	minHeight := math.Min(a.Box.Height(), b.Box.Height())
+	return minHeight <= 0 || yOverlap < 0.5*minHeight
 }
 
 func shouldCompactStandaloneHyphen(left, hyphen, right page.TextCell) bool {
