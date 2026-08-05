@@ -340,20 +340,29 @@ func appendTableRows(upper, lower doctable.Data) doctable.Data {
 
 	rows := make([][]string, 0, upper.NumRows+lower.NumRows)
 	for r := 0; r < upper.NumRows; r++ {
-		rows = append(rows, gridRowText(upperGrid[r], cols))
+		rows = append(rows, gridRowText(upperGrid[r], r, cols))
 	}
 	for r := 0; r < lower.NumRows; r++ {
-		rows = append(rows, gridRowText(lowerGrid[r], cols))
+		rows = append(rows, gridRowText(lowerGrid[r], r, cols))
 	}
 	return doctable.FromGrid(rows)
 }
 
-func gridRowText(row []doctable.Cell, cols int) []string {
+// gridRowText reads one grid row's cell text, taking a spanned cell's text
+// only at its anchor slot (StartRow, StartCol): Grid() places the same cell in
+// every slot it covers, and repeating its text would fabricate duplicate
+// rows/columns in the stitched table (the same rule render.Table applies).
+func gridRowText(row []doctable.Cell, rowIndex, cols int) []string {
 	out := make([]string, cols)
 	for col := range cols {
-		if col < len(row) {
-			out[col] = row[col].Text
+		if col >= len(row) {
+			continue
 		}
+		cell := row[col]
+		if cell.StartRow != rowIndex || cell.StartCol != col {
+			continue
+		}
+		out[col] = cell.Text
 	}
 	return out
 }
