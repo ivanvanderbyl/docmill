@@ -24,3 +24,4 @@ testdocs/*.pdf
 testdocs/*.md
 entropy.md
 entropy.pdf
+entropy.*.md
