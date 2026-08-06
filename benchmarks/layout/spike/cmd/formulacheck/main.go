@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser"
 	docpdf "github.com/ivanvanderbyl/docmill/v2/pkg/pdf"
@@ -29,7 +31,25 @@ func run(path string, formula bool) string {
 	return out
 }
 
+var (
+	mu         sync.Mutex
+	considered int
+	vetoed     int
+	winners    = map[string]int{}
+)
+
 func main() {
+	restore := docpdf.SetFormulaVetoSink(func(winner string, votes int, tally map[string]int) {
+		mu.Lock()
+		defer mu.Unlock()
+		considered++
+		winners[winner]++
+		if winner == "Formula" && votes > 0 {
+			vetoed++
+		}
+	})
+	defer restore()
+
 	ok, err := docpdf.LayoutModelAvailable()
 	fmt.Println("model available:", ok, "err:", err, "classes:", docpdf.LayoutModelClasses())
 	for _, path := range os.Args[1:] {
@@ -46,5 +66,15 @@ func main() {
 		}
 		fmt.Printf("%s: table rows %d -> %d, bytes %d -> %d, identical=%v\n",
 			path, countRows(base), countRows(learned), len(base), len(learned), base == learned)
+	}
+	fmt.Printf("\ncandidate tables considered: %d, vetoed as Formula: %d\n", considered, vetoed)
+	keys := make([]string, 0, len(winners))
+	for k := range winners {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return winners[keys[i]] > winners[keys[j]] })
+	fmt.Println("plurality label of the lines inside each candidate table:")
+	for _, k := range keys {
+		fmt.Printf("  %-16s %d\n", k, winners[k])
 	}
 }

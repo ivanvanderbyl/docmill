@@ -363,6 +363,7 @@ func rejectFormulaTables(lines []ParagraphTextLine, cells []page.TextCell, size 
 	kept := detected.Tables[:0]
 	for _, candidate := range detected.Tables {
 		votes := map[string]int{}
+		_ = votes
 		for i, line := range lines {
 			if lineContainment(line.BBox, candidate.Box) >= 0.5 {
 				votes[labels[i]]++
@@ -373,6 +374,9 @@ func rejectFormulaTables(lines []ParagraphTextLine, cells []page.TextCell, size 
 			if count > best || (count == best && label < winner) {
 				winner, best = label, count
 			}
+		}
+		if formulaVetoSink != nil {
+			formulaVetoSink(winner, best, votes)
 		}
 		if best > 0 && winner == layoutClassFormula {
 			remaining = append(remaining, candidate.TextCells...)
@@ -388,3 +392,17 @@ func rejectFormulaTables(lines []ParagraphTextLine, cells []page.TextCell, size 
 // DocLayNet's class name, which is the teacher's vocabulary rather than
 // docmill's; the mapping onto docmill routing lives in the plan's label table.
 const layoutClassFormula = "Formula"
+
+// formulaVetoSink observes every candidate table the Formula veto considers:
+// the plurality label among its lines, how many lines voted for it, and the
+// full tally. Installed by the benchmark harness to answer "did the rule run
+// and find nothing, or did it never run?" — a distinction a byte-identical
+// result cannot make on its own. nil in production.
+var formulaVetoSink func(winner string, votes int, tally map[string]int)
+
+// SetFormulaVetoSink installs the observer above and returns a restore func.
+func SetFormulaVetoSink(sink func(string, int, map[string]int)) func() {
+	previous := formulaVetoSink
+	formulaVetoSink = sink
+	return func() { formulaVetoSink = previous }
+}
