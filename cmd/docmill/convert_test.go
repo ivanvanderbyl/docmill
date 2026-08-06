@@ -49,6 +49,63 @@ func TestRunConvertAcceptsArgSeparatorBeforePath(t *testing.T) {
 	require.Contains(t, stderr.String(), "read PDF")
 }
 
+func TestRunConvertRejectsUnknownFlag(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	err := runConvert(context.Background(), []string{"-nope", "/no/such/file.pdf"}, &stdout, &stderr)
+
+	require.Error(t, err)
+	require.Empty(t, stdout.String())
+	require.Contains(t, stderr.String(), "flag provided but not defined")
+}
+
+func TestRunConvertAcceptsLearnedLayoutFlagBeforePath(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	// The flag parses, so the path is reached and the missing file is the error.
+	err := runConvert(context.Background(), []string{"-learned-layout", "/no/such/file.pdf"}, &stdout, &stderr)
+
+	require.Error(t, err)
+	require.Empty(t, stdout.String())
+	require.Contains(t, stderr.String(), "read PDF")
+}
+
+func TestConvertOptionsDefaultMatchesExtractMarkdown(t *testing.T) {
+	t.Parallel()
+
+	options := convertOptions(false)
+
+	require.True(t, options.DetectTables)
+	require.True(t, options.ReadingOrder)
+	require.True(t, options.DetectStructure)
+	require.True(t, options.DetectHeadings)
+	// Nothing learned unless asked: the default conversion is unchanged.
+	require.False(t, options.ClassifyThenRoute)
+	require.False(t, options.LearnedRouting)
+	require.False(t, options.LearnedFormulaRouting)
+}
+
+func TestConvertOptionsLearnedLayoutEnablesTheWholeLearnedPath(t *testing.T) {
+	t.Parallel()
+
+	options := convertOptions(true)
+
+	// LearnedRouting is only consulted on the rerouted path, and the Formula
+	// veto is a separate gate — the flag has to set all three or it silently
+	// migrates only some classes.
+	require.True(t, options.ClassifyThenRoute)
+	require.True(t, options.LearnedRouting)
+	require.True(t, options.LearnedFormulaRouting)
+	require.True(t, options.DetectHeadings)
+	require.True(t, options.DetectStructure)
+}
+
 func TestNewConvertBackendUsesNativePDFium(t *testing.T) {
 	t.Parallel()
 

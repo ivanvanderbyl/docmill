@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -10,17 +11,28 @@ import (
 	docpdf "github.com/ivanvanderbyl/docmill/v2/pkg/pdf"
 )
 
-// runConvert converts a single PDF path (args[0]) to Markdown on stdout using
-// the native pure-Go PDFium port.
+// runConvert converts a single PDF path to Markdown on stdout using the native
+// pure-Go PDFium port.
 func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	args = stripArgSeparator(args)
-	if len(args) != 1 {
-		err := fmt.Errorf("usage: docmill [convert] <input.pdf>")
+	flags := flag.NewFlagSet("docmill convert", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	learnedLayout := flags.Bool("learned-layout", false,
+		"classify lines with the embedded layout model instead of the hand-tuned detectors (headings, list items, figure innards, formulas)")
+	// No stripArgSeparator here: "--" is the flag package's own end-of-flags
+	// terminator, so parsing directly keeps `convert -- <path>` working and also
+	// lets a path that begins with "-" through.
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+
+	rest := flags.Args()
+	if len(rest) != 1 {
+		err := fmt.Errorf("usage: docmill [convert] [-learned-layout] <input.pdf>")
 		_, _ = fmt.Fprintln(stderr, err)
 		return err
 	}
 
-	data, err := os.ReadFile(args[0])
+	data, err := os.ReadFile(rest[0])
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "read PDF: %v\n", err)
 		return err
@@ -40,7 +52,7 @@ func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	}
 	defer doc.Close()
 
-	markdown, err := docpdf.ExtractMarkdown(ctx, doc)
+	markdown, err := docpdf.ExtractMarkdownWithOptions(ctx, doc, convertOptions(*learnedLayout))
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "extract Markdown: %v\n", err)
 		return err
@@ -48,6 +60,32 @@ func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) er
 
 	_, err = fmt.Fprint(stdout, markdown)
 	return err
+}
+
+// convertOptions is ExtractMarkdown's default option set, plus the learned
+// layout pipeline when -learned-layout asks for it.
+//
+// Without the flag the options are exactly ExtractMarkdown's, so the default
+// conversion stays byte-identical to what it produces today.
+func convertOptions(learnedLayout bool) docpdf.ExtractionOptions {
+	options := docpdf.ExtractionOptions{
+		DetectTables:    true,
+		ReadingOrder:    true,
+		DetectStructure: true,
+		DetectHeadings:  true,
+	}
+	if learnedLayout {
+		// The learned decisions only exist on the classify-then-route path, so
+		// the flag turns that on too. LearnedFormulaRouting is set alongside
+		// LearnedRouting because the Formula veto is a separate gate in
+		// reroute.go: without it the model would own headings, lists and
+		// figures while formulas kept flowing into tables, which is not what
+		// "run the learned classifier" means to anyone typing the flag.
+		options.ClassifyThenRoute = true
+		options.LearnedRouting = true
+		options.LearnedFormulaRouting = true
+	}
+	return options
 }
 
 func newConvertBackend() (docpdf.Backend, error) {

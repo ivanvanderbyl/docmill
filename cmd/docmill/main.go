@@ -2,6 +2,8 @@
 //
 //	docmill <input.pdf>          convert a PDF to Markdown (native backend)
 //	docmill convert <input.pdf>  same as above, explicit
+//	docmill convert -learned-layout <input.pdf>
+//	                             convert with the learned layout classifier
 //	docmill forms export <input.pdf>
 //	docmill forms layout <input.pdf>
 //	docmill forms fill <input.pdf> <output.pdf> [values.json]
@@ -93,6 +95,9 @@ func usage(w io.Writer, args []string) {
 Commands:
   <input.pdf>          convert a PDF to Markdown (default, native backend)
   convert <input.pdf>  convert a PDF to Markdown
+                       -learned-layout classifies lines with the embedded layout
+                       model (headings, list items, figure innards, formulas)
+                       instead of the hand-tuned detectors
   forms export <input.pdf>
                        write AcroForm field values as JSON
   forms layout <input.pdf>
