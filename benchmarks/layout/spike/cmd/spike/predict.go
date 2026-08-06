@@ -59,7 +59,7 @@ func runPredict(args []string) error {
 
 	encoder := json.NewEncoder(os.Stdout)
 	for _, path := range args {
-		rows, err := emitDocument(context.Background(), path, false)
+		rows, err := emitDocument(context.Background(), path, false, false)
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}

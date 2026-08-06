@@ -109,9 +109,9 @@ func genPredict(features []float64) float64 {
 // moved the score most, plus how often each feature was tested overall.
 func genExplain(features []float64, names []string, topTrees int) string {
 	type contribution struct {
-		tree  int
-		leaf  float64
-		path  []string
+		tree int
+		leaf float64
+		path []string
 	}
 
 	contributions := make([]contribution, 0, genTreeCount)

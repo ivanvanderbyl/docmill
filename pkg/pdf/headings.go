@@ -55,7 +55,20 @@ type headingLine struct {
 	level  int
 }
 
+// headingDecider overrides the hand-tuned heading test. When non-nil it is
+// consulted INSTEAD of isHeadingLine, which is the single decision Task 6
+// migrates for this class. Everything downstream — level assignment, adjacent
+// merging, leading-marker attachment, the contents-page filters — is kept
+// deliberately: the plan says heading LEVEL assignment survives because the
+// teacher is flat on headings, and the rest is block construction rather than
+// classification.
+type headingDecider func(line ParagraphTextLine) bool
+
 func splitHeadingCellsProtecting(cells []page.TextCell, size geom.Size, protected map[int]bool) ([]markdownBlock, []page.TextCell) {
+	return splitHeadingCellsWith(cells, size, protected, nil)
+}
+
+func splitHeadingCellsWith(cells []page.TextCell, size geom.Size, protected map[int]bool, decide headingDecider) ([]markdownBlock, []page.TextCell) {
 	if len(cells) == 0 {
 		return nil, nil
 	}
@@ -113,6 +126,15 @@ func splitHeadingCellsProtecting(cells []page.TextCell, size geom.Size, protecte
 			}
 			following := followingLines(lines, i, 4)
 			metric := lineMetric(line)
+			if decide != nil {
+				// Model-owned: one call, no thresholds, and no structural
+				// splitting fallback — the model sees the whole line and either
+				// calls it a heading or does not.
+				if decide(line) {
+					headings = append(headings, headingLine{line: line, metric: metric})
+				}
+				continue
+			}
 			if isHeadingLine(line, metric, bodyMetric, size, prev, next) {
 				headings = append(headings, headingLine{line: line, metric: metric})
 				continue

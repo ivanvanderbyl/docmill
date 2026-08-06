@@ -1,0 +1,161 @@
+package pdf
+
+import (
+	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
+	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
+)
+
+// Model-owned routing: the end state Task 6 works towards, where the learned
+// classifier decides what every line is and no hand-tuned classification
+// threshold remains.
+//
+// What the model takes over here:
+//
+//	Section-header, Title  -> heading  (replaces isHeadingLine)
+//	List-item              -> list     (replaces isListBlockCandidate)
+//	Picture                -> dropped from prose (replaces the figure-label filter)
+//	Formula                -> never a table cell (already migrated)
+//
+// What it deliberately does NOT take over, per the plan:
+//
+//	heading LEVEL assignment  — the teacher is flat on headings, so
+//	                            assignDocumentHeadingLevels survives
+//	table STRUCTURE           — a class label cannot build a grid; pkg/table
+//	                            still builds every cell
+//	line assembly, columns, reading order — out of scope for this project
+//
+// The unit is the class-agnostically assembled line, so every decision below is
+// made on the same lines the model was trained on.
+
+// The model's label set, which is DocLayNet's vocabulary rather than docmill's.
+// The mapping onto docmill routing is the plan's label table.
+const (
+	layoutClassSectionHeader = "Section-header"
+	layoutClassTitle         = "Title"
+	layoutClassListItem      = "List-item"
+	layoutClassPicture       = "Picture"
+	layoutClassTable         = "Table"
+)
+
+// lineLabeller predicts a label per class-agnostic line and answers questions
+// about a box. Built once per page so the model runs over each line exactly
+// once, however many routing decisions consult it.
+type lineLabeller struct {
+	lines  []ParagraphTextLine
+	labels []string
+	ok     bool
+}
+
+func newLineLabeller(lines []ParagraphTextLine, cells []page.TextCell, size geom.Size, rulings []page.RulingSegment) *lineLabeller {
+	out := &lineLabeller{lines: lines, labels: make([]string, len(lines))}
+	model, err := layoutModel()
+	if err != nil || model == nil || len(lines) == 0 {
+		return out
+	}
+
+	// repeat_frac is 0 here, matching how the model was trained: DocLayNet is
+	// 81k single-page PDFs, so it never saw a non-zero value. Feeding page
+	// context in would be the skew this project keeps guarding against.
+	ctx := NewPageLayoutContext(size, cells, lines, rulings, 0, 1)
+	for i := range lines {
+		var prev, next *ParagraphTextLine
+		if i > 0 {
+			prev = &lines[i-1]
+		}
+		if i+1 < len(lines) {
+			next = &lines[i+1]
+		}
+		out.labels[i], _ = model.PredictLineClass(LineLayoutFeatures(lines[i], prev, next, ctx))
+	}
+	out.ok = true
+	return out
+}
+
+// labelOf returns the label for a box by a PLURALITY VOTE over the
+// class-agnostic lines inside it.
+//
+// A vote rather than the single best-matching line, because a block is usually
+// several lines: a three-line paragraph fully contains three lines, all scoring
+// containment 1.0, so "the best match" would pick one of them arbitrarily and
+// the label would depend on iteration order. This is the same
+// argmax-over-the-line-label-distribution rule the Formula veto uses, for the
+// same reason.
+func (l *lineLabeller) labelOf(box geom.Box) (string, bool) {
+	if !l.ok {
+		return "", false
+	}
+	votes := map[string]int{}
+	for i, line := range l.lines {
+		if lineContainment(line.BBox, box) >= 0.5 {
+			votes[l.labels[i]]++
+		}
+	}
+	winner, best := "", 0
+	for label, count := range votes {
+		if count > best || (count == best && label < winner) {
+			winner, best = label, count
+		}
+	}
+	if best == 0 {
+		return "", false
+	}
+	return winner, true
+}
+
+// isHeading reports whether the model calls this line a heading. Section-header
+// and Title collapse to one destination because docmill has a single heading
+// concept and levels are assigned later from the document outline.
+func (l *lineLabeller) isHeading(line ParagraphTextLine) bool {
+	label, ok := l.labelOf(line.BBox)
+	return ok && (label == layoutClassSectionHeader || label == layoutClassTitle)
+}
+
+// isClass reports whether the model gives box exactly this label.
+func (l *lineLabeller) isClass(box geom.Box, class string) bool {
+	label, ok := l.labelOf(box)
+	return ok && label == class
+}
+
+// dropPictureBlocks removes blocks the model calls Picture — figure innards
+// such as axis ticks, node labels and legend text, which are text on the page
+// but not part of the prose flow.
+//
+// This replaces filterFigureInternalLabelBlocks, whose measured recall on
+// DocLayNet was 0.074: it fired on one figure line in thirteen. Captions are
+// NOT dropped; the model gives them their own class and they route as prose.
+func dropPictureBlocks(blocks []markdownBlock, labeller *lineLabeller) []markdownBlock {
+	if !labeller.ok {
+		return blocks
+	}
+	out := blocks[:0]
+	for _, block := range blocks {
+		if block.tableData == nil && labeller.isClass(block.Box, layoutClassPicture) {
+			continue
+		}
+		out = append(out, block)
+	}
+	return out
+}
+
+// applyLearnedListItems rewrites the blocks the model calls List-item, using the
+// existing marker-stripping writer.
+//
+// It replaces isListBlockCandidate and listBlockHasContext — the run-context
+// rule that gave DetectStructure 0.126 recall, because a list item with no
+// neighbouring list item was never recognised. The model has no such
+// requirement: it judges each line on its own geometry.
+func applyLearnedListItems(blocks []markdownBlock, labeller *lineLabeller) []markdownBlock {
+	if !labeller.ok {
+		return blocks
+	}
+	out := append([]markdownBlock(nil), blocks...)
+	for i := range out {
+		if out[i].tableData != nil || !labeller.isClass(out[i].Box, layoutClassListItem) {
+			continue
+		}
+		if rewritten, ok := rewriteListItem(out[i].Text); ok {
+			out[i].Text = rewritten
+		}
+	}
+	return out
+}

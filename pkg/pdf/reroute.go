@@ -71,9 +71,18 @@ func pageMarkdownBlocksRouted(ctx context.Context, cells []page.TextCell, wordCe
 	// is what keeps the two free of skew.
 	allLines := AssembleLineElements(cells, ParagraphOptions{}.withDefaults().LineTolerance)
 
-	// STEP 2 — routing. The decisions are the existing heuristics', run in the
-	// existing structural order: headings claim first, then tables, and whatever
-	// is unclaimed flows as prose.
+	// The model runs once per page over the class-agnostic lines; every routing
+	// decision below consults the same labels.
+	var labeller *lineLabeller
+	if options.LearnedRouting {
+		_, finishStage := startStage(ctx, "layout_classify")
+		labeller = newLineLabeller(allLines, cells, size, rulings)
+		finishStage(nil)
+	}
+
+	// STEP 2 — routing. Headings claim first, then tables, and whatever is
+	// unclaimed flows as prose. With LearnedRouting the ORDER is unchanged and
+	// only the DECIDER moves.
 	var headingBlocks []markdownBlock
 	remaining := cells
 	if options.DetectHeadings {
@@ -83,7 +92,11 @@ func pageMarkdownBlocksRouted(ctx context.Context, cells []page.TextCell, wordCe
 			protected = mergeProtectedCellIndexes(protected, protectedListLineCellIndexes(cells))
 		}
 		protected = mergeProtectedCellIndexes(protected, denseIndexLineCellIndexes(cells, size))
-		headingBlocks, remaining = splitHeadingCellsProtecting(cells, size, protected)
+		var decide headingDecider
+		if labeller != nil && labeller.ok {
+			decide = labeller.isHeading
+		}
+		headingBlocks, remaining = splitHeadingCellsWith(cells, size, protected, decide)
 		finishStage(nil)
 	}
 
@@ -122,12 +135,20 @@ func pageMarkdownBlocksRouted(ctx context.Context, cells []page.TextCell, wordCe
 
 	if options.DetectStructure {
 		_, finishStage := startStage(ctx, "structure")
-		blocks = detectStructure(blocks)
+		if labeller != nil && labeller.ok {
+			blocks = applyLearnedListItems(blocks, labeller)
+		} else {
+			blocks = detectStructure(blocks)
+		}
 		finishStage(nil)
 	}
 
 	_, finishStage := startStage(ctx, "postprocess")
-	blocks = filterFigureInternalLabelBlocks(blocks, size)
+	if labeller != nil && labeller.ok {
+		blocks = dropPictureBlocks(blocks, labeller)
+	} else {
+		blocks = filterFigureInternalLabelBlocks(blocks, size)
+	}
 	blocks = splitMarginalPageNumberBlocks(blocks, size)
 	blocks = append(blocks, formBlocks...)
 

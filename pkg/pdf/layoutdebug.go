@@ -184,6 +184,11 @@ func currentLineClasses(state pageDebugState, options ExtractionOptions) []strin
 
 	var headingBoxes, tableBoxes, listBoxes, figureBoxes []geom.Box
 
+	var labeller *lineLabeller
+	if options.LearnedRouting {
+		labeller = newLineLabeller(state.lines, state.cells, state.size, state.rulings)
+	}
+
 	if options.DetectHeadings {
 		protected := protectedHeadingCellIndexes(cells, state.rulings, options)
 		if options.DetectStructure {
@@ -191,7 +196,11 @@ func currentLineClasses(state pageDebugState, options ExtractionOptions) []strin
 		}
 		protected = mergeProtectedCellIndexes(protected, denseIndexLineCellIndexes(cells, state.size))
 		var headingBlocks []markdownBlock
-		headingBlocks, cells = splitHeadingCellsProtecting(cells, state.size, protected)
+		var decide headingDecider
+		if labeller != nil && labeller.ok {
+			decide = labeller.isHeading
+		}
+		headingBlocks, cells = splitHeadingCellsWith(cells, state.size, protected, decide)
 		for _, block := range headingBlocks {
 			headingBoxes = append(headingBoxes, block.Box)
 		}
@@ -227,7 +236,7 @@ func currentLineClasses(state pageDebugState, options ExtractionOptions) []strin
 		// With the Formula class migrated, the replay must apply the same veto,
 		// so `current` describes the pipeline being measured rather than the
 		// one it replaced.
-		if options.LearnedFormulaRouting {
+		if options.LearnedFormulaRouting || options.LearnedRouting {
 			detected, remaining = rejectFormulaTables(state.lines, state.cells, state.size, state.rulings, detected, remaining)
 		}
 		for _, detectedTable := range detected.Tables {
@@ -240,7 +249,12 @@ func currentLineClasses(state pageDebugState, options ExtractionOptions) []strin
 	// blocks the list detector rewrote and which the figure filter discarded.
 	blocks := assembleDebugBlocks(remaining, state.size, options)
 	if options.DetectStructure {
-		structured := detectStructure(blocks)
+		structured := blocks
+		if labeller != nil && labeller.ok {
+			structured = applyLearnedListItems(blocks, labeller)
+		} else {
+			structured = detectStructure(blocks)
+		}
 		for i := range structured {
 			if i < len(blocks) && structured[i].Text != blocks[i].Text {
 				listBoxes = append(listBoxes, structured[i].Box)
@@ -248,7 +262,12 @@ func currentLineClasses(state pageDebugState, options ExtractionOptions) []strin
 		}
 		blocks = structured
 	}
-	kept := filterFigureInternalLabelBlocks(blocks, state.size)
+	kept := blocks
+	if labeller != nil && labeller.ok {
+		kept = dropPictureBlocks(append([]markdownBlock(nil), blocks...), labeller)
+	} else {
+		kept = filterFigureInternalLabelBlocks(blocks, state.size)
+	}
 	keptBoxes := make(map[geom.Box]bool, len(kept))
 	for _, block := range kept {
 		keptBoxes[block.Box] = true

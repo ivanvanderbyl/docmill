@@ -89,6 +89,12 @@ type ExtractionOptions struct {
 	// lines are predominantly Formula is rejected and its cells return to the
 	// prose path. Requires ClassifyThenRoute; OFF by default.
 	LearnedFormulaRouting bool
+	// LearnedRouting hands every line-class decision to the model: headings,
+	// list items and figure innards, on top of the Formula rule. The hand-tuned
+	// detectors for those classes are bypassed, not deleted — deleting them is
+	// the final step, once this measures well on every class. Requires
+	// ClassifyThenRoute; OFF by default.
+	LearnedRouting bool
 }
 
 const defaultMaxParallelPages = 12
