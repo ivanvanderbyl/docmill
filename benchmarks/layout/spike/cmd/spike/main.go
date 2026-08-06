@@ -22,38 +22,23 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 
-	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
-	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser"
 	docpdf "github.com/ivanvanderbyl/docmill/v2/pkg/pdf"
-	"github.com/ivanvanderbyl/docmill/v2/pkg/textline"
 )
 
-// lineTolerance matches ParagraphOptions{}.withDefaults().LineTolerance, the
-// value the production assembler uses. Hard-coded here because the field is not
-// reachable from outside pkg/pdf.
-const lineTolerance = 4
+// lineRow is one emitted training row. It is now just docmill's own
+// LayoutDebugRow: the feature vector and the current heuristic class both come
+// from pkg/pdf, so there is exactly one definition of each.
+type lineRow = docpdf.LayoutDebugRow
 
-// lineRow is one emitted training row: the line's identity and box (for the
-// join against the teacher's region boxes) plus its feature vector.
-type lineRow struct {
-	Doc      string    `json:"doc"`
-	Page     int       `json:"page"` // 1-based, matching HURIDOCS page_number
-	Line     int       `json:"line"`
-	PageW    float64   `json:"page_w"`
-	PageH    float64   `json:"page_h"`
-	L        float64   `json:"l"`
-	T        float64   `json:"t"`
-	R        float64   `json:"r"`
-	B        float64   `json:"b"`
-	Text     string    `json:"text"`
-	Features []float64 `json:"f"`
-}
+// featureNames is the feature contract, read from pkg/pdf rather than restated
+// here. Task 2 moved the definition into the shipping package precisely so this
+// throwaway tool cannot drift from it.
+var featureNames = docpdf.LayoutFeatureContract()
 
 func main() {
 	if len(os.Args) < 2 {
@@ -168,16 +153,13 @@ func runEmit(args []string) error {
 	return nil
 }
 
-// emitDocument assembles every page CLASS-AGNOSTICALLY — straight from the raw
-// text cells into lines, with no figure-region cell drops and no table
-// carve-outs — and returns one feature row per line.
+// emitDocument delegates to pkg/pdf.LayoutDebugRows, which assembles every page
+// CLASS-AGNOSTICALLY — straight from the raw text cells, no figure drops and no
+// table carve-outs — computes the feature vector, and reports what today's
+// heuristics call each line.
 //
-// This is the point of the exercise and the plan calls it out explicitly: the
-// worst formula cases are exactly the lines that today's pipeline swallows into
-// a fake table or drops as figure innards, so a dump taken from the default
-// path would not contain the rows the model most needs to learn from. Calling
-// AssembleLineElements directly on the raw cells is what "DetectTables
-// disabled" means here.
+// That last part is Task 1's baseline: the heuristics and the model have to be
+// scored on the SAME lines or the comparison means nothing.
 func emitDocument(ctx context.Context, path string) ([]lineRow, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -193,97 +175,12 @@ func emitDocument(ctx context.Context, path string) ([]lineRow, error) {
 	defer doc.Close()
 
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	pageCount, err := doc.PageCount(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var rows []lineRow
-	for index := 0; index < pageCount; index++ {
-		pageRows, err := emitPage(ctx, doc, index, name)
-		if err != nil {
-			return nil, fmt.Errorf("page %d: %w", index+1, err)
-		}
-		rows = append(rows, pageRows...)
-	}
-	return rows, nil
-}
-
-func emitPage(ctx context.Context, doc docpdf.Document, index int, name string) ([]lineRow, error) {
-	pdfPage, err := doc.Page(ctx, index)
-	if err != nil {
-		return nil, err
-	}
-	size, err := pdfPage.Size(ctx)
-	if err != nil {
-		return nil, err
-	}
-	cells, err := pdfPage.TextCells(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if len(cells) == 0 {
-		return nil, nil
-	}
-
-	lines := assembleLines(cells)
-	ctxPage := newPageContext(size, cells, lines)
-
-	rows := make([]lineRow, 0, len(lines))
-	for i := range lines {
-		var prev, next *textline.ParagraphTextLine
-		if i > 0 {
-			prev = &lines[i-1]
-		}
-		if i+1 < len(lines) {
-			next = &lines[i+1]
-		}
-		box := lines[i].BBox
-		rows = append(rows, lineRow{
-			Doc:      name,
-			Page:     index + 1,
-			Line:     i,
-			PageW:    size.Width,
-			PageH:    size.Height,
-			L:        box.L,
-			T:        topEdge(box),
-			R:        box.R,
-			B:        bottomEdge(box),
-			Text:     lines[i].Text,
-			Features: lineFeatures(lines[i], prev, next, ctxPage),
-		})
-	}
-	return rows, nil
-}
-
-// assembleLines runs the shared line assembler over every cell on the page and
-// returns the lines sorted top-to-bottom, which is the order the gap features
-// assume. AssembleLineElements already emits in that order; the sort is
-// defensive and free.
-func assembleLines(cells []page.TextCell) []textline.ParagraphTextLine {
-	lines := docpdf.AssembleLineElements(cells, lineTolerance)
-	sort.SliceStable(lines, func(i, j int) bool {
-		return lines[i].BBox.CenterY() < lines[j].BBox.CenterY()
+	// The same options ExtractMarkdown uses, so the current-class column
+	// describes the pipeline users actually run.
+	return docpdf.LayoutDebugRows(ctx, doc, name, docpdf.ExtractionOptions{
+		DetectTables:    true,
+		ReadingOrder:    true,
+		DetectStructure: true,
+		DetectHeadings:  true,
 	})
-	return lines
-}
-
-// topEdge and bottomEdge return the box's edges as TOP-LEFT-origin values —
-// smaller y is nearer the top of the page — regardless of which origin the box
-// records. docmill's text cells are already TopLeft (see TextRectsToCells), and
-// HURIDOCS reports left/top/width/height in the same top-down points, so the
-// join in join.py can compare them directly. Normalising here rather than at
-// the join is the whole of the "reconcile coordinate systems carefully" step.
-func topEdge(box geom.Box) float64 {
-	if box.Origin == geom.BottomLeft {
-		return box.B
-	}
-	return box.T
-}
-
-func bottomEdge(box geom.Box) float64 {
-	if box.Origin == geom.BottomLeft {
-		return box.T
-	}
-	return box.B
 }
