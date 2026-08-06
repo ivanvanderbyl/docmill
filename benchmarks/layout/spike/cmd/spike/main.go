@@ -14,13 +14,18 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
 	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
@@ -79,23 +84,87 @@ func main() {
 	}
 }
 
+// runEmit dumps feature rows for every PDF named on the command line, or — with
+// -list <file> — for every path in a file, which is how the DocLayNet corpus is
+// driven (80k single-page PDFs overflow ARG_MAX).
+//
+// Emission is embarrassingly parallel across documents, so it runs a worker
+// pool: at corpus scale the difference is hours. Output order is not stable
+// across workers, which is fine because every row carries its own doc/page/line
+// identity and the join is by key, not by position.
 func runEmit(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("usage: spike emit <input.pdf>...")
+	flags := flag.NewFlagSet("emit", flag.ContinueOnError)
+	listPath := flags.String("list", "", "file containing one PDF path per line")
+	jobs := flags.Int("jobs", runtime.NumCPU(), "parallel workers")
+	quiet := flags.Bool("quiet", false, "suppress per-document progress")
+	if err := flags.Parse(args); err != nil {
+		return err
 	}
-	encoder := json.NewEncoder(os.Stdout)
-	for _, path := range args {
-		rows, err := emitDocument(context.Background(), path)
+
+	paths := flags.Args()
+	if *listPath != "" {
+		data, err := os.ReadFile(*listPath)
 		if err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+			return err
 		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				paths = append(paths, line)
+			}
+		}
+	}
+	if len(paths) == 0 {
+		return fmt.Errorf("usage: spike emit [-list paths.txt] [-jobs N] <input.pdf>...")
+	}
+
+	work := make(chan string)
+	results := make(chan []lineRow, *jobs)
+	var wg sync.WaitGroup
+	var failures atomic.Int64
+	var done atomic.Int64
+
+	for i := 0; i < *jobs; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range work {
+				rows, err := emitDocument(context.Background(), path)
+				if err != nil {
+					// One malformed PDF in a 80k-document corpus must not
+					// abandon the other 79,999; count it and carry on.
+					failures.Add(1)
+					fmt.Fprintf(os.Stderr, "skip %s: %v\n", filepath.Base(path), err)
+					continue
+				}
+				results <- rows
+			}
+		}()
+	}
+	go func() {
+		for _, path := range paths {
+			work <- path
+		}
+		close(work)
+		wg.Wait()
+		close(results)
+	}()
+
+	writer := bufio.NewWriterSize(os.Stdout, 1<<20)
+	defer writer.Flush()
+	encoder := json.NewEncoder(writer)
+	lines := 0
+	for rows := range results {
 		for _, row := range rows {
 			if err := encoder.Encode(row); err != nil {
 				return err
 			}
 		}
-		fmt.Fprintf(os.Stderr, "emitted %d lines from %s\n", len(rows), filepath.Base(path))
+		lines += len(rows)
+		if n := done.Add(1); !*quiet && n%500 == 0 {
+			fmt.Fprintf(os.Stderr, "%d/%d documents, %d lines, %d skipped\n", n, len(paths), lines, failures.Load())
+		}
 	}
+	fmt.Fprintf(os.Stderr, "emitted %d lines from %d documents (%d skipped)\n", lines, len(paths)-int(failures.Load()), failures.Load())
 	return nil
 }
 
