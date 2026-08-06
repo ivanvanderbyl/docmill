@@ -547,10 +547,10 @@ func isMathRune(r rune) bool {
 	case unicode.Is(unicode.Greek, r):
 		return true
 	case r >= 0x2200 && r <= 0x22FF, // mathematical operators
-		r >= 0x2A00 && r <= 0x2AFF, // supplemental operators
-		r >= 0x27C0 && r <= 0x27EF, // miscellaneous symbols-A
+		r >= 0x2A00 && r <= 0x2AFF,   // supplemental operators
+		r >= 0x27C0 && r <= 0x27EF,   // miscellaneous symbols-A
 		r >= 0x1D400 && r <= 0x1D7FF, // mathematical alphanumerics
-		r >= 0x2070 && r <= 0x209F: // super/subscripts
+		r >= 0x2070 && r <= 0x209F:   // super/subscripts
 		return true
 	}
 	switch r {
