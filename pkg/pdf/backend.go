@@ -76,6 +76,20 @@ type ExtractionOptions struct {
 	// legacy line.Text path. ExtractMarkdown leaves it false.
 	EnableInlineFormatting bool
 	TableDetection         doctable.DetectionOptions
+	// ClassifyThenRoute selects the alternate classify-then-route pipeline
+	// (Task 5 of docs/plans/2026-08-06-learned-layout-classifier.md): assemble
+	// every cell into lines first, then route each line to its destination,
+	// instead of carving figures and tables out before lines exist. Every
+	// routing decision is still the existing heuristics' — the flag isolates
+	// refactor risk from model risk so the reroute can be proven neutral on
+	// DPBench before anything learned enters the loop. OFF by default; the
+	// default path is untouched.
+	ClassifyThenRoute bool
+	// LearnedFormulaRouting migrates the Formula class from the heuristics to
+	// the model within the rerouted path (Task 6). A candidate table whose
+	// lines are predominantly Formula is rejected and its cells return to the
+	// prose path. Requires ClassifyThenRoute; OFF by default.
+	LearnedFormulaRouting bool
 }
 
 const defaultMaxParallelPages = 12
@@ -404,15 +418,8 @@ type markdownBlock struct {
 }
 
 func pageMarkdownBlocks(ctx context.Context, cells []page.TextCell, wordCells []page.TextCell, rulings []page.RulingSegment, formFields []page.FormField, size geom.Size, options ExtractionOptions) ([]markdownBlock, error) {
-	// Suppress text inside caption-anchored vector drawings before any
-	// structure detection: node labels, axis ticks, and box labels inside a
-	// figure otherwise surface as body text, headings, or fake table cells.
-	// Captions and prose-like cells survive (see dropCellsInFigureRegions).
-	if regions := figureRegions(cells, rulings, size); len(regions) > 0 {
-		cells = dropCellsInFigureRegions(cells, regions)
-		if len(wordCells) > 0 {
-			wordCells = dropCellsInFigureRegions(wordCells, regions)
-		}
+	if options.ClassifyThenRoute {
+		return pageMarkdownBlocksRouted(ctx, cells, wordCells, rulings, formFields, size, options)
 	}
 	// Reassign each cell a column-aware reading-order Index, then assemble text
 	// per column so that lines are never merged across a column gutter. When the
@@ -485,49 +492,12 @@ func pageMarkdownBlocks(ctx context.Context, cells []page.TextCell, wordCells []
 		return blocks, nil
 	}
 
+	// Table detection is shared with the rerouted path (reroute.go) so that
+	// "the reroute changes the ORDER, not the decisions" is enforced by there
+	// being one definition, rather than merely asserted in a comment.
 	detectStart := time.Now()
 	_, detectSpan := tracer.Start(ctx, "pipeline.table_detect")
-	tableProtected := denseIndexLineCellIndexes(cells, size)
-	tableCells, protectedTableCells := splitCellsByIndexSet(cells, tableProtected)
-	// Keep marginal page numbers out of table detection entirely: a table or
-	// equation region reaching the page edge otherwise swallows the page number
-	// into a cell mid-content. The word-level cells feed anchored detection and
-	// table text reassignment, so they are filtered too — otherwise a table
-	// whose box reaches the margin band swallows the number via the word path.
-	tableCells, marginalNumberCells := splitMarginalPageNumberCells(tableCells, size)
-	if len(wordCells) > 0 {
-		wordCells, _ = splitMarginalPageNumberCells(wordCells, size)
-	}
-	detected := doctable.DetectTables(tableCells, rulings, options.TableDetection)
-	remainingCells := detected.TextCells
-	tableOverlapThreshold := normalisedTableOverlapThreshold(options.TableDetection)
-	if len(wordCells) > 0 {
-		anchored := doctable.DetectAnchoredTextTables(tableCells, wordCells, options.TableDetection)
-		if len(anchored.Tables) > 0 {
-			detected.Tables = mergePreferredTables(detected.Tables, anchored.Tables, tableCells)
-			remainingCells = textCellsOutsideTables(tableCells, detected.Tables, tableOverlapThreshold)
-		} else if len(detected.Tables) == 0 {
-			remainingCells = tableCells
-		}
-		detected.Tables = reassignDetectedTableTextFromWords(detected.Tables, wordCells, tableOverlapThreshold)
-	}
-	// Drop zero-validity false positives that survive the borderless+anchored
-	// merge — tables whose validity score is 0 (every content
-	// column is prose: multi-column body text the anchored detector gridded into
-	// a fake table). Their cells return to the paragraph path. The score's
-	// structural credits spare genuine tables that keep a short key/label column;
-	// done after the merge so it does not resurface base-detector fragments.
-	keptTables := detected.Tables[:0]
-	for _, detectedTable := range detected.Tables {
-		if doctable.ValidityScore(detectedTable.Data) <= 0 {
-			remainingCells = append(remainingCells, detectedTable.TextCells...)
-			continue
-		}
-		keptTables = append(keptTables, detectedTable)
-	}
-	detected.Tables = keptTables
-	remainingCells = append(remainingCells, protectedTableCells...)
-	remainingCells = append(remainingCells, marginalNumberCells...)
+	detected, remainingCells := detectPageTables(cells, wordCells, rulings, size, options)
 	detectSpan.SetAttributes(attribute.Int("tables", len(detected.Tables)))
 	detectSpan.End()
 	recordStage(ctx, "table_detect", detectStart)

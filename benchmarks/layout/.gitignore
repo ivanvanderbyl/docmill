@@ -1,0 +1,9 @@
+# The spike corpus itself is not committed: 37 MB of third-party PDFs (19 arXiv
+# papers plus entropy.pdf) whose licences vary per publisher. Task 1 introduces
+# a manifest recording the source and licence of every training document; until
+# then the corpus is reproduced from spike/README.md.
+spike/pdfs/
+
+# Emitted lines, joined datasets, predictions and reports — all regenerable from
+# spike/labels/ (which IS committed) plus the corpus.
+spike/out/

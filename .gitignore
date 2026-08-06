@@ -25,3 +25,4 @@ testdocs/*.md
 entropy.md
 entropy.pdf
 entropy.*.md
+.venv-spike/
