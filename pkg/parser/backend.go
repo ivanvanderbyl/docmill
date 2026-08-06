@@ -180,13 +180,25 @@ func (p *Page) TextCells(ctx context.Context) ([]docpage.TextCell, error) {
 	}
 	cells := docpdf.TextRectsToCells(textRects, size.Height)
 
-	reextract := func(box geom.Box) string {
-		bounds := docpdf.TopLeftBoxToPDFiumBounds(box, size.Height)
-		return tp.GetTextByRect(crt.NewFloatRect(
-			float32(bounds.Left), float32(bounds.Bottom),
-			float32(bounds.Right), float32(bounds.Top)))
+	// Batched exclusive re-extraction: every merged group's box is handed to
+	// the textpage at once, and each character is emitted into exactly one
+	// cell — the one whose box covers it best. Without exclusivity, a glyph
+	// whose charBox straddles two cell regions (big-operator limits and
+	// sub/superscripts routinely overlap the neighbouring line's rect) is
+	// swept into both rect queries and appears twice; with sequential
+	// first-query-wins claiming, a tall math delimiter's rect grazing the
+	// next prose line stole letters out of that line's own re-extraction.
+	reextractAll := func(boxes []geom.Box) []string {
+		rects := make([]crt.FloatRect, len(boxes))
+		for i, box := range boxes {
+			bounds := docpdf.TopLeftBoxToPDFiumBounds(box, size.Height)
+			rects[i] = crt.NewFloatRect(
+				float32(bounds.Left), float32(bounds.Bottom),
+				float32(bounds.Right), float32(bounds.Top))
+		}
+		return tp.GetTextByRectsExclusive(rects)
 	}
-	cells = docpdf.MergeFragmentedCells(cells, reextract, docpdf.MergeOptions{})
+	cells = docpdf.MergeFragmentedCellsExclusive(cells, reextractAll, docpdf.MergeOptions{})
 	return cells, nil
 }
 

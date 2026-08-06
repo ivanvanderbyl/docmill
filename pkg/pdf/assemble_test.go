@@ -173,6 +173,8 @@ func TestAssembleParagraphsKeepsRaisedApostropheWithBaselineLine(t *testing.T) {
 func TestAssembleParagraphsRendersGeneratedHyphenAsVisibleHyphen(t *testing.T) {
 	t.Parallel()
 
+	// The \x02 line-break-hyphen marker fires on hard compound splits as well
+	// as soft ones, so it stays a visible hyphen rather than being removed.
 	cells := []page.TextCell{
 		pdfTextCell(1, "Hen\x02", 0, 0, 50, 10),
 		pdfTextCell(2, "nigen", 0, 12, 50, 22),
@@ -181,6 +183,21 @@ func TestAssembleParagraphsRendersGeneratedHyphenAsVisibleHyphen(t *testing.T) {
 	got := extractBody(t, cells)
 
 	require.Equal(t, "Hen- nigen", got)
+}
+
+func TestAssembleParagraphsDehyphenatesSoftHyphenAtLineJoin(t *testing.T) {
+	t.Parallel()
+
+	// A soft hyphen (U+00AD) is typeset only at a break by definition, so
+	// rejoining the split word is the correct reflow.
+	cells := []page.TextCell{
+		pdfTextCell(1, "Hen­", 0, 0, 50, 10),
+		pdfTextCell(2, "nigen", 0, 12, 50, 22),
+	}
+
+	got := extractBody(t, cells)
+
+	require.Equal(t, "Hennigen", got)
 }
 
 func TestAssembleParagraphsRemovesSpaceBeforePunctuation(t *testing.T) {

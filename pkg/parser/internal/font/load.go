@@ -88,6 +88,7 @@ func (f *Font) loadCommon() bool {
 	}
 	f.loadPDFEncoding(f.hasFontFile, f.kind == kindTrueType)
 	f.loadGlyphMap()
+	f.resolveTeXEncoding()
 	f.charNames = nil
 	return true
 }
@@ -306,8 +307,51 @@ func (f *Font) loadCommonBase14() bool {
 	}
 	f.loadPDFEncoding(f.hasFontFile, false)
 	f.loadGlyphMap()
+	f.resolveTeXEncoding()
 	f.charNames = nil
+	f.loadBase14Metrics()
 	return true
+}
+
+// loadBase14Metrics supplies the built-in Standard-14 AFM metrics for glyphs
+// whose advance width is otherwise unknown. A conforming reader must have
+// metrics for the standard fonts even when the PDF omits /Widths (ISO 32000-1
+// 9.6.2.2, PDF 1.0-1.4 practice); PDFium satisfies this through the substitute
+// face, which this face-less port lacks. Only sentinel (unset) charWidth
+// entries are filled, so an explicit /Widths array, /MissingWidth default, the
+// Courier fixed-pitch prefill, and embedded-program metrics all keep
+// precedence. The AFM Ascender/Descender/FontBBox likewise only backfill a
+// descriptor that supplied none, giving GetCharBBox a real vertical extent
+// instead of the 0.8em/-0.2em face-less default.
+func (f *Font) loadBase14Metrics() {
+	if !f.hasBase14 || f.hasFontFile {
+		return
+	}
+	if widths := base14Widths(f.base14); widths != nil {
+		for code := range f.charWidth {
+			if f.charWidth[code] != 0xffff {
+				continue
+			}
+			name := f.glyphNames[code]
+			if name == "" {
+				continue
+			}
+			if w, ok := widths[name]; ok {
+				f.charWidth[code] = w
+			}
+		}
+	}
+	vm := base14VerticalMetrics[f.base14]
+	if f.ascent == 0 && f.descent == 0 {
+		f.ascent = vm.ascender
+		f.descent = vm.descender
+	}
+	if f.fontBBox == (rect{}) {
+		f.fontBBox = rect{
+			left: vm.bbox[0], bottom: vm.bbox[1],
+			right: vm.bbox[2], top: vm.bbox[3],
+		}
+	}
 }
 
 // --- Type3 ---
@@ -320,8 +364,29 @@ func (f *Font) loadType3() bool {
 
 	matrix := f.fontDict.GetArrayFor("FontMatrix")
 	var xscale float32 = 1.0
+	var yscale float32 = 1.0
 	if matrix != nil && matrix.Len() == 6 {
 		xscale = matrix.GetFloatAt(0)
+		yscale = matrix.GetFloatAt(3)
+	}
+
+	// CPDF_Type3Font::Load scales the font-dict /FontBBox by the FontMatrix
+	// diagonal and converts to 1000-unit glyph space (TextUnitRectToGlyphUnit-
+	// Rect). GetCharBBox falls back to this vertical extent when the char
+	// program is not rasterised, so without it every Type 3 glyph degenerates
+	// to a baseline sliver. Stored normalised (bottom <= top): a y-flipping
+	// FontMatrix (dvips emits [1 0 0 -1 0 0]) inverts the raw corners.
+	if bbox := f.fontDict.GetArrayFor("FontBBox"); bbox != nil && bbox.Len() == 4 {
+		x0 := bbox.GetFloatAt(0) * xscale * 1000
+		y0 := bbox.GetFloatAt(1) * yscale * 1000
+		x1 := bbox.GetFloatAt(2) * xscale * 1000
+		y1 := bbox.GetFloatAt(3) * yscale * 1000
+		f.fontBBox = rect{
+			left:   roundf(min(x0, x1)),
+			bottom: roundf(min(y0, y1)),
+			right:  roundf(max(x0, x1)),
+			top:    roundf(max(y0, y1)),
+		}
 	}
 
 	start := f.fontDict.GetIntegerFor("FirstChar")
@@ -339,6 +404,7 @@ func (f *Font) loadType3() bool {
 	if f.fontDict.GetDirectObjectFor("Encoding") != nil {
 		f.loadPDFEncoding(false, false)
 	}
+	f.resolveTeXEncoding()
 	return true
 }
 

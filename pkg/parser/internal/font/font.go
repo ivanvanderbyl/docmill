@@ -102,6 +102,11 @@ type Font struct {
 	base14    standardFont
 	hasBase14 bool
 
+	// texUnicode is the TeX-encoding fallback table resolved at load time for
+	// fonts with no /ToUnicode and only synthetic glyph names (dvips Computer
+	// Modern output); nil when no encoding was identified. See texencoding.go.
+	texUnicode *[256]rune
+
 	// --- CID-font state ---
 	cmap            *cmap
 	cid2unicodeMap  *cid2UnicodeMap
@@ -351,18 +356,37 @@ func (f *Font) unicodeUnits(charcode uint32) []uint16 {
 		}
 		return nil
 	case kindType3:
-		// Type3: ToUnicode only (no face/encoding text fallback here).
-		return f.baseUnicodeUnits(charcode)
+		// Type3: ToUnicode, then the TeX-encoding fallback (a Type 3 font has
+		// no face/encoding text source, so without ToUnicode its codes would
+		// otherwise yield nothing).
+		if u := f.baseUnicodeUnits(charcode); len(u) > 0 {
+			return u
+		}
+		if f.texUnicode != nil && charcode < 256 {
+			if r := f.texUnicode[charcode]; r != 0 {
+				return utf16.Encode([]rune{r})
+			}
+		}
+		return nil
 	default:
 		// CPDF_SimpleFont::UnicodeFromCharCode: ToUnicode then encoding_.
 		if u := f.baseUnicodeUnits(charcode); len(u) > 0 {
 			return u
 		}
+		var ret rune
 		if f.encoding != nil {
-			ret := f.encoding.UnicodeFromCharCode(uint8(charcode))
-			if ret != 0 {
-				return utf16.Encode([]rune{ret})
+			ret = f.encoding.UnicodeFromCharCode(uint8(charcode))
+		}
+		// TeX fallback: only when the encoding path produced nothing usable
+		// (zero or a control scalar); a successful mapping is never
+		// overridden.
+		if f.texUnicode != nil && charcode < 256 && (ret == 0 || ret < 0x20) {
+			if r := f.texUnicode[charcode]; r != 0 {
+				return utf16.Encode([]rune{r})
 			}
+		}
+		if ret != 0 {
+			return utf16.Encode([]rune{ret})
 		}
 		return nil
 	}

@@ -16,7 +16,15 @@ def main() -> int:
     parser.add_argument(
         "--tool",
         required=True,
-        choices=["docling", "markitdown", "pymupdf4llm", "opendataloader", "liteparse", "pypdf"],
+        choices=[
+            "docling",
+            "markitdown",
+            "pymupdf4llm",
+            "opendataloader",
+            "liteparse",
+            "pypdf",
+            "pdf-inspector",
+        ],
     )
     parser.add_argument("--version", action="store_true")
     parser.add_argument("input", nargs="?")
@@ -44,6 +52,7 @@ def package_version(tool: str) -> str:
         "opendataloader": "opendataloader-pdf",
         "liteparse": "liteparse",
         "pypdf": "pypdf",
+        "pdf-inspector": "pdf-inspector",
     }[tool]
     module = {
         "docling": "docling",
@@ -52,6 +61,7 @@ def package_version(tool: str) -> str:
         "opendataloader": "opendataloader_pdf",
         "liteparse": "liteparse",
         "pypdf": "pypdf",
+        "pdf-inspector": "pdf_inspector",
     }[tool]
     if importlib_metadata is not None:
         try:
@@ -96,6 +106,15 @@ def convert(tool: str, input_path: Path) -> str:
             raise SystemExit("install liteparse to use the liteparse adapter") from exc
         parser = LiteParse(output_format="markdown", image_mode="placeholder", extract_links=True, quiet=True)
         return parser.parse(str(input_path)).text
+
+    if tool == "pdf-inspector":
+        try:
+            import pdf_inspector
+        except ImportError as exc:
+            raise SystemExit("install pdf-inspector to use the pdf-inspector adapter") from exc
+        # process_pdf returns markdown=None for a scanned/image PDF it routes to
+        # OCR rather than parsing; that is an empty conversion, not an error.
+        return pdf_inspector.process_pdf(str(input_path)).markdown or ""
 
     if tool == "pypdf":
         try:
