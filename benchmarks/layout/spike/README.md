@@ -7,6 +7,11 @@ separate display equations from headings? Result and numbers:
 This directory is **not** shipping code. If the plan proceeds, Task 2 rebuilds the
 feature extractor properly inside `pkg/pdf` and this is deleted.
 
+**The recorded numbers were measured on `ivan/layout-classifier-plan`, not on `main`.**
+The parser and line-assembly work on that branch changes how many lines the emitter
+produces (2,335 vs 2,551 for `entropy.pdf`), so running this here reproduces the
+*method* but not the *figures*. The research note's provenance section has the detail.
+
 ## Layout
 
 | path | what |

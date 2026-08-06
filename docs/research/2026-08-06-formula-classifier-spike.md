@@ -34,6 +34,25 @@ recommendation is to proceed.
 
 ---
 
+## Which code these numbers were measured against
+
+**Every number below was measured on `ivan/layout-classifier-plan` (`1206f2b`), not on
+this branch's base.** That branch carries the parser and line-assembly work from
+`ivan/improve-scientific-paper-parsing` plus `83cb3b7` ("measure a line by its dominant
+glyph size"). This branch is rebased onto `main`, which has none of it.
+
+That matters, because the difference is in the unit of classification itself:
+
+| `entropy.pdf` | on `main` | on `ivan/layout-classifier-plan` |
+|---|---|---|
+| Assembled lines the emitter produces | 2,551 | **2,335** |
+| Headings docmill emits | 67 | **71** |
+
+So the "12 of 71 headings are display equations" baseline does not exist on `main`, and
+re-running the harness here will not reproduce the figures in this note. To reproduce
+them, check out `ivan/layout-classifier-plan` and apply this directory on top. Re-measure
+against whatever lands on `main` before treating any of this as a baseline for Task 1.
+
 ## Setup
 
 - **Corpus:** 20 PDFs — 19 arXiv papers (spanning ML, physics, and mathematics
@@ -178,6 +197,9 @@ that the extra leading around a display equation is real, learnable signal.
 - Latency was not measured.
 
 ## Reproducing
+
+Start from `ivan/layout-classifier-plan` — see the provenance section above; on `main`
+the line assembler produces a different line set and the figures will not match.
 
 ```bash
 docker run -d --name pdla -p 5060:5060 --entrypoint ./start.sh \
