@@ -234,14 +234,76 @@ most-tested features on this vector:
   y_center_frac          tested 151 times, value 0.8677
 ```
 
-**Recommendation for Task 4: generate.** It is faster, allocation-free, has no start-up
-cost, drops a third-party dependency, removes the `version=v4` header problem along with
-the parser that caused it, and satisfies the explainability requirement instead of
-booking a gap against it. The costs are a generator to maintain (~250 lines), a
-bootstrap ordering wrinkle (the generated file must exist before the generator that
-writes it will compile — a placeholder breaks the cycle), and 843 KB of generated Go in
-place of a 979 KB embedded artefact. The equivalence tests are what make this safe to
-switch; keep them.
+**Recommendation for Task 4: generate — but see the scaling section below, which changes
+the recommended FORM of codegen at multiclass scale.** Generating is faster,
+allocation-free, has no start-up cost, drops a third-party dependency, removes the
+`version=v4` header problem along with the parser that caused it, and satisfies the
+explainability requirement instead of booking a gap against it. The costs are a
+generator to maintain (~250 lines), a bootstrap ordering wrinkle (the generated file
+must exist before the generator that writes it will compile — a placeholder breaks the
+cycle), and 843 KB of generated Go in place of a 979 KB embedded artefact. The
+equivalence tests are what make this safe to switch; keep them.
+
+## How big does this get on the real corpus?
+
+The spike's 300-tree binary model is 12,236 lines of generated Go. The plan's LINE model
+is 11-class over several hundred to ~1000 documents, so the obvious worry is whether
+that scales to something unbuildable. Measured, not projected:
+
+**Corpus size barely matters.** Node count saturates against `num_leaves`, not against
+data:
+
+| training documents | lines | nodes | nodes/tree |
+|---|---|---|---|
+| 5 | 5,022 | 7,526 | 25.09 |
+| 10 | 8,428 | 8,231 | 27.44 |
+| 19 | 15,918 | 8,448 | 28.16 |
+
+Tripling the data grew the model 12%, and 28.16 of a possible 30 nodes per tree is 94%
+saturated. Going from 19 to 1000 documents can add at most ~6% more nodes at these
+hyperparameters. **Corpus growth is not the scaling axis.**
+
+**Class count is.** Training the actual 11-class LINE model (plus a `Background` class
+for lines no teacher region covers) on the same corpus:
+
+| | trees | nodes | generated Go |
+|---|---|---|---|
+| binary Formula (the spike) | 300 | 8,448 | 824 KB / 12k lines |
+| 12-class LINE model | 3,600 | 90,823 | **9.0 MB / 131k lines** |
+
+LightGBM trains one tree per class per round, so 12 classes is a flat **10.75×**. The
+remaining multipliers are linear and are hyperparameter choices, not data consequences:
+doubling `num_leaves` (31 → 63) or rounds (300 → 600) each roughly doubles it again. A
+plausible upper bound — 12 classes, 500 rounds, 63 leaves — lands near 36 MB of Go.
+
+**9 MB of Go source compiles, but it is not free:**
+
+| | cold build | rebuild after regenerating | binary | init |
+|---|---|---|---|---|
+| baseline (empty program) | 8.2 s | — | 2.4 MB | — |
+| 9 MB generated Go source | 15.4 s | **6.9 s** | 5.0 MB | 0 |
+| 2.5 MB embedded binary blob | 8.7 s | **0.35 s** | 5.0 MB | 4.4 ms |
+| `leaves` + text artefact | — | — | — | 8.0 ms |
+
+(Go's build cache hashes content, not mtime, so `touch` does not invalidate it — the
+rebuild column is after a genuine content change.)
+
+**So the recommendation refines at scale.** Go source and an embedded blob produce the
+same binary size and the same prediction speed — the trees are identical and the walk is
+the same code. They differ only in where the data lives, and the blob wins on the axis
+that matters day to day: **6.9 s versus 0.35 s to rebuild after retraining**, a 20×
+difference paid every single retrain, in exchange for 4.4 ms once at start-up. That
+trade is clearly worth taking at 12 classes; it is not worth taking at the spike's
+binary scale, where the source is under 1 MB and rebuild cost is negligible.
+
+Concretely for Task 4: keep the flat-array walker and the equivalence tests exactly as
+they are — they are independent of where the numbers come from — and swap the storage
+from Go literals to a `go:embed`ed packed blob once the model goes multiclass. The
+4.4 ms decode is itself reducible if it ever matters, since the blob is already in the
+target layout and could be reinterpreted rather than copied.
+
+`spike gen` currently emits Go source and refuses non-binary objectives; extending it to
+multiclass and to blob output is the Task 4 work item this measurement defines.
 
 ## Top features by gain
 
