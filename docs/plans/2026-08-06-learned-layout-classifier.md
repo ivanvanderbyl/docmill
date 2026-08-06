@@ -3,13 +3,17 @@
 **Goal:** Replace docmill's hand-tuned layout heuristics with a single gradient-boosted
 tree classifier, compiled to Go, that decides what each assembled line is.
 
-**Target architecture (decided):** ONE classifier. No hand-tuned decision thresholds,
-no parallel heuristic fallback. Generated Go cannot be unavailable, so the usual
-reason for keeping a fallback path does not apply here, and maintaining two
-classifiers would require a tie-break rule that is itself a hand-tuned threshold.
+**Target architecture (decided):** one learned cascade — a LINE model and a REGION
+model — with no hand-tuned decision thresholds and no parallel heuristic fallback.
+Generated Go cannot be unavailable, so the usual reason for keeping a fallback path
+does not apply here. The two models are not rival classifiers needing a tie-break:
+they decide different things at different granularities, in sequence, and the region
+model consumes the line model's output. During migration a fixed transitional
+precedence rule arbitrates between model-owned and heuristic-owned classes (defined
+in Task 6); it is deleted with the last heuristic.
 
 **Sequencing constraint:** the heuristics cannot be deleted before the model exists and
-is proven per class. Removal is Phase 5, gated on measured evidence, not Phase 1.
+is proven per class. Removal is Task 6, gated on measured evidence, not Task 1.
 
 **Why:** Every threshold in `pkg/pdf/headings.go`, `pkg/pdf/figures.go` and
 `pkg/table/detect.go` was chosen by a person looking at one document. `AGENTS.md`
@@ -32,16 +36,106 @@ Python + LightGBM (offline training), Docker (HURIDOCS labeller), DPBench (valid
 
 ## Design decisions already made
 
-**Unit of classification: the assembled line.** Not the token, not the block.
-Lines are what docmill already produces with full geometry and font metrics; grouping
-runs of same-class lines into blocks afterwards is straightforward; and a wrong
-prediction costs one line rather than a whole region.
+**Where the classifier runs: classify, then route.** The current pipeline decides
+figures and tables BEFORE lines exist: `figureRegions` runs on raw cells and rulings
+and its cells are dropped pre-assembly (`backend.go:411`), and `DetectTables`
+consumes cells directly, producing table blocks that never become lines. A line
+classifier bolted on after today's assembly cannot take over those decisions — they
+are already baked into what got assembled. So the pipeline is restructured:
+
+1. Assemble ALL cells into lines, class-agnostically — no figure drops, no table
+   carve-outs.
+2. Classify every line with the LINE model.
+3. Group runs of same-label lines into candidate regions and gate the structural
+   ones with the REGION model (see the cascade decision below): accepted `Table`
+   candidates hand their underlying cells to the `pkg/table` structure builder;
+   accepted `Picture` candidates are excluded from prose flow as figure innards
+   (captions survive as `Caption`); everything else flows as today.
+4. Reading order runs after routing — as it effectively does today, since ordering
+   currently runs after the figure drops.
+
+The candidate feature list already anticipates this: baseline dispersion, cell count
+and gutter alignment are exactly the features that light up when a "line" is really a
+table row.
+
+**Two granularities, one cascade: a line pass, then a region pass.** The table
+accept/reject decision is region-scoped, and no line feature can express it:
+gutter persistence, column-count stability and row regularity are properties of the
+whole run of lines. `tableViolatesGutterPersistence` is an invariant over a candidate
+table, not over any line in it, and the fake-table defect has exactly this shape —
+each equation line looks tableish alone; the run lacks persistent gutters. So
+classification happens twice:
+
+1. The LINE model labels every line (all 11 classes).
+2. Runs of same-label lines become candidate regions. For the structural classes —
+   `Table` and `Picture` — a REGION model takes region-scoped features (gutter
+   persistence score, column-count stability, row-height regularity, ruling and
+   stroke coverage, math-symbol density, and the distribution of line labels inside
+   the candidate) and accepts or rejects the candidate. Rejected candidates fall
+   back to their line labels.
+
+The equation-versus-table arbitration thereby becomes learned rather than ordered:
+"80% of these lines scored Formula" is a region feature. Two bonuses fall out. The
+teacher's labels are region-shaped — HURIDOCS emits region boxes — so the region
+model's training join (candidate box to teacher box) is a cleaner, near one-to-one
+match than the line-level one-to-many join. And the cascade stays threshold-free:
+each stage is argmax over learned trees; nothing compares against a hand-picked
+constant.
+
+Candidate extent is deliberately simple: a maximal run of same-label lines with a
+small gap tolerance. Boundary trimming (growing or shrinking a candidate by a line)
+is a later refinement, only if TEDS shows boundary errors matter.
+
+**What the model does NOT replace.** Three things survive on purpose:
+
+- The table STRUCTURE builder in `pkg/table`. TEDS scores cell structure; a class
+  label cannot build a grid. The gutter logic survives as structure building — the
+  accept/reject and membership decisions that `tableViolatesGutterPersistence` and
+  friends own today move to the REGION model.
+- Heading LEVEL assignment (`assignDocumentHeadingLevels`). The teacher is flat on
+  headings anyway (see Risks).
+- Cross-page table stitching (`connectCrossPageTables`).
+
+Line-assembly geometry, column detection and reading order also keep their
+thresholds. This project removes classification thresholds, not all thresholds.
+
+**Unit of classification: the class-agnostically assembled line.** Not the token, not
+the block. Lines are what docmill already produces with full geometry and font
+metrics; grouping runs of same-class lines into blocks afterwards is routing, not new
+detection; and a wrong prediction costs one line rather than a whole region. The
+region pass classifies GROUPS of lines, but every group is derived from line labels —
+the line stays the atomic unit.
 
 **Teacher: HURIDOCS labels, not its model.** Do NOT port their LightGBM model
 directly. It expects features derived from Poppler's XML output, so porting it means
 reproducing a foreign extraction pipeline bit-for-bit in Go, and a subtle mismatch
 yields a model that runs fine and predicts rubbish. Take their labels; train on OUR
 features.
+
+**Corpora: DPBench is the exam, not the textbook.** The model is never trained on
+DPBench documents or on `entropy.pdf`. Training uses a separate corpus labelled by
+the same teacher — labels are nearly free once the Docker service is up. Target
+several hundred to ~1000 PDFs sampled for diversity: arXiv papers, reports, manuals,
+forms. Model selection uses held-out documents WITHIN the training corpus; DPBench
+and `entropy.pdf` measure only the end-to-end effect, untouched. Training on the
+benchmark would turn Task 7's "beats the baseline" into a memory test.
+
+**Label set: the teacher's 11 DocLayNet classes, mapped to docmill routing.**
+
+| Teacher label | docmill routing after classification |
+|---|---|
+| Text | paragraph line, as today |
+| Section header, Title | heading line; levels still assigned by `assignDocumentHeadingLevels` |
+| List item | list/structure path (`DetectStructure`) |
+| Table | candidate region gated by the REGION model; accepted candidates' cells go to the `pkg/table` structure builder |
+| Picture | candidate region gated by the REGION model; accepted candidates are figure innards, excluded from prose flow (replaces the `dropCellsInFigureRegions` decision) |
+| Caption | prose, kept adjacent to its figure/table |
+| Formula | display-equation handling; never table cells |
+| Page header, Page footer | keep current behaviour initially (docmill has no page-furniture concept; the page-number footer splitting at `backend.go:886` stays). Flip to exclusion only if DPBench extraction improves. |
+| Footnote | prose at end of page (current behaviour) |
+
+The undecided rows are decisions with defaults, not blockers; each flip is measured
+in Task 6 like any other migration.
 
 **Existing heuristics become feature extractors.** `lineMostlyItalic`,
 `tableViolatesGutterPersistence`, baseline dispersion, gutter scores, stroke
@@ -69,8 +163,12 @@ docmill currently has no dedicated detector for it, so there is a clean before/a
 1. Run HURIDOCS over ~20 documents including `entropy.pdf`. Keep only `Formula` boxes.
 2. Emit docmill's assembled lines with a SMALL feature set — a dozen features, not the
    full list in Task 2. Baseline count, font size ratio, alignment, gap above/below,
-   width fraction, cell count, italic fraction will do.
+   width fraction, cell count, italic fraction will do. Emit with `DetectTables`
+   disabled: the worst formula cases are precisely the ones currently swallowed into
+   fake tables, and those lines never exist in a dump taken from the default path.
 3. Join by IoU, train a binary LightGBM (formula vs not), hold out whole documents.
+   `entropy.pdf` MUST be in the held-out set — step 5 evaluates on it, and a spike
+   that grades itself on its own training document proves nothing.
 4. Embed via `leaves` and predict inside docmill.
 5. Compare against the current heuristics on `entropy.pdf`: how many of the nine
    equation-headings and the residual fake-table regions does it catch, and how many
@@ -95,15 +193,18 @@ quality judgement in this project so far has been docmill's own output judging i
 2. Run it over the DPBench corpus (200 PDFs) and over `entropy.pdf`, in both
    `fast=true` and `fast=false` modes. Keep both: the gap between them is the
    accuracy a feature-only model gives up versus a vision model, measured on our
-   own corpus rather than taken from a paper.
-3. Run docmill over the same PDFs, emitting each assembled line's box and its current
+   own corpus rather than taken from a paper. These documents are for measurement
+   and final evaluation ONLY — they never enter training (see Corpora decision).
+3. Assemble the separate TRAINING corpus (several hundred to ~1000 diverse PDFs)
+   and run the labeller over it. Record the source and licence of every document.
+4. Run docmill over the same PDFs, emitting each assembled line's box and its current
    predicted class.
-4. Match docmill lines to HURIDOCS regions by IoU. Produce a per-class confusion
-   matrix and error rate for the CURRENT heuristics.
-5. **Verify the labeller before trusting it.** Hand-check a stratified sample of at
-   least 100 regions against the page images. Teacher errors become student errors.
-   Report the labeller's own error rate; if it is high on a class, that class is not
-   a candidate for distillation.
+5. Match docmill lines to HURIDOCS regions by IoU. Produce a per-class confusion
+   matrix and error rate for the CURRENT heuristics on DPBench + `entropy.pdf`.
+6. **Verify the labeller before trusting it.** Hand-check a stratified sample of at
+   least 100 regions against the page images, drawn from BOTH corpora. Teacher
+   errors become student errors. Report the labeller's own error rate; if it is high
+   on a class, that class is not a candidate for distillation.
 
 **Deliverable:** a table of per-class error rates for the existing heuristics. This
 decides which classes are worth replacing and which are already good. Record it in
@@ -123,26 +224,56 @@ decides which classes are worth replacing and which are already good. Record it 
    (left/centre/right); column index; nearby stroke density; whether an equivalent box
    repeats at the same position on other pages; page index normalised; numbering depth
    if a leading marker is present.
-2. Refactor the existing heuristics into feature extractors returning numbers, not
+2. Add a small set of LEXICAL features — caption and formula detection lean on
+   content, and the teacher's own fast model uses content features: leading caption
+   keyword (`Figure`, `Table`, `Fig.`, `Eq.`); digit fraction; math-symbol fraction;
+   punctuation density; uppercase fraction; trailing full stop. Caveat: keyword
+   features are English-biased. Keep them a small minority of the vector and check
+   during Task 3 that the model degrades gracefully with them ablated — AGENTS.md
+   requires document-general inputs.
+3. Define the REGION feature vector for the second pass (see the cascade decision):
+   gutter persistence score, column-count stability, row-height regularity, ruling
+   and stroke coverage, math-symbol density, extent fractions, cell-count statistics,
+   and the distribution of line labels inside the candidate. Region training rows are
+   emitted later, in the Task 3 loop, because they need the embedded line model.
+4. Refactor the existing heuristics into feature extractors returning numbers, not
    verdicts. Do not delete the decision paths yet.
-3. **The feature vector's order and meaning is a contract** between the Python trainer
-   and the Go predictor. Define it in ONE place and generate both sides from it, or a
-   silent index shift will produce a model that is confidently wrong.
-4. Add a debug emitter: docmill dumps `(box, features, current class)` as JSONL for a
-   corpus. Task 1's harness consumes this.
+5. **Each feature vector's order and meaning is a contract** between the Python
+   trainer and the Go predictor. Define each in ONE place and generate both sides
+   from it, or a silent index shift will produce a model that is confidently wrong.
+6. Add a debug emitter: docmill dumps `(box, features, current class)` as JSONL for a
+   corpus. **The emitter MUST run the class-agnostic assembly path** — the same
+   assembly the classifier will see at inference (see Task 5). Dumping features from
+   today's post-carve-out assembly would train the model on lines that never occur at
+   prediction time: training/serving skew, the silent cousin of the index-shift bug.
 
 ### Task 3: Train offline
 
 **Files:**
 - Create: `benchmarks/layout/train.py`
 
-1. Join the Task 2 JSONL to the Task 1 labels by IoU. Hold out documents (not lines)
-   for validation, so a document's lines cannot appear in both splits.
-2. Train LightGBM multiclass over the HURIDOCS label set.
-3. Report per-class precision/recall against the held-out documents, and compare
+1. Join the Task 2 JSONL (training corpus only) to the Task 1 labels by IoU. Hold
+   out documents (not lines) for validation, so a document's lines cannot appear in
+   both splits. DPBench and `entropy.pdf` never enter either split.
+2. Train the LINE model: LightGBM multiclass over the teacher label set. Use class
+   weights: `Text` dominates the row count, and docmill's costs are asymmetric — a
+   fake table is worse than a missed one. Encode that asymmetry in training weights,
+   NOT in per-class decision thresholds at inference; inference stays pure argmax.
+3. Train the REGION model second. It needs the line model's labels, so the loop is:
+   train line model → embed (Task 4) → run the Go emitter to group candidates and
+   dump region features over the training corpus → train region model → embed.
+   Candidate boxes join to teacher region boxes by IoU — the cleaner, near
+   one-to-one join. Grouping and region features are computed ONLY by the shared Go
+   path; a Python reimplementation would reintroduce skew.
+4. **Pin for reproducibility:** LightGBM version, random seed, `deterministic=true`,
+   fixed thread count, for both models. Commit the training config next to
+   `train.py`. Two runs from the same data must produce the same model, or the
+   repeatability story dies at the first retrain.
+5. Report per-class precision/recall for the line model, and accept/reject
+   precision/recall for the region model, against the held-out documents, and compare
    directly to Task 1's heuristic error rates. **A class where the model does not beat
    the heuristic is not a class to migrate.**
-4. Keep the model small and shallow enough to stay explainable: prefer a few hundred
+6. Keep the model small and shallow enough to stay explainable: prefer a few hundred
    trees of limited depth. `AGENTS.md` requires detection to be "deterministic,
    repeatable, and explainable"; a decision path you can print satisfies that.
 
@@ -156,7 +287,8 @@ runtime disk dependency, and no exporter or tree-walker to write and maintain.
 
 **Files:**
 - Create: `pkg/pdf/layoutmodel.go`
-- Create: `pkg/pdf/layoutmodel.txt` (trained artefact, embedded)
+- Create: `pkg/pdf/layoutmodel.txt` (line-model artefact, embedded;
+  `pkg/pdf/layoutregion.txt` joins it once the region model is trained)
 - Test: `pkg/pdf/layoutmodel_test.go`
 
 ```go
@@ -168,9 +300,11 @@ var model = sync.OnceValue(func() *leaves.Ensemble { ... })
 
 1. Embed the artefact and load it once via `sync.OnceValue`. Nothing is read from disk
    at runtime and nothing ships alongside the binary.
-2. Predict per line; take the argmax class.
+2. Predict per line with the line ensemble and per candidate region with the region
+   ensemble; take the argmax.
 3. **Pin the port with a fixture test**: feature vectors plus the scores the Python
-   model produced for them, asserted against the Go path. This catches index shifts and
+   models produced for them, for both stages, asserted against the Go path. This
+   catches index shifts and
    float drift, the realistic failure modes, and is the test proving the Python and Go
    sides agree.
 4. Check what introspection `leaves` exposes for the explainability requirement. If it
@@ -184,7 +318,31 @@ Do it only if profiling shows `leaves` is too slow, or if the explainability gap
 step 4 turns out to matter. The artefact is identical either way, so switching later is
 contained to this one file.
 
-### Task 5: Migrate per class, then delete
+### Task 5: Reroute the pipeline behind a flag
+
+The classify-then-route pipeline (see Design decisions) is built as an alternate path
+in `pkg/pdf/backend.go` behind an extraction option. The default path is untouched.
+This task isolates REFACTOR risk from MODEL risk: the reroute must be proven neutral
+before any model decision goes live.
+
+**Files:**
+- Modify: `pkg/pdf/backend.go`
+
+1. Add class-agnostic assembly: assemble all cells into lines with no figure drops
+   and no table carve-outs. Reuse the existing line assembler; only the pre-assembly
+   exclusions change.
+2. Add the routing stage. In this task every routing decision is still taken by the
+   EXISTING heuristics (figures, tables, headings exactly as today), restated as
+   post-assembly routing instead of pre-assembly carve-outs.
+3. **Gate: DPBench through the rerouted path must match the current pipeline** within
+   noise. Any real delta is an assembly or routing bug — for example the
+   tall-delimiter corridor logic guarded by `mathline_internal_test.go` now sees
+   lines inside regions it never saw before. Fix before proceeding.
+4. Wire the Task 4 predictors in shadow mode: line labels and region verdicts
+   computed and logged, decisions unchanged. This produces a live confusion matrix
+   on the real pipeline to cross-check Task 1's offline one.
+
+### Task 6: Migrate per class, then delete
 
 This is where the hand-coded classifier is removed, one class at a time, on evidence.
 
@@ -192,10 +350,19 @@ This is where the hand-coded classifier is removed, one class at a time, on evid
 - Modify: `pkg/pdf/headings.go`, `pkg/pdf/figures.go`, `pkg/table/detect.go`,
   `pkg/pdf/backend.go`
 
-For each class, in ascending order of current error rate (worst first, so Formula and
-Table lead):
+**Transitional precedence rule (decided now, deleted with the last heuristic):**
+while model-owned and heuristic-owned classes coexist, conflicting claims over the
+same cells are resolved by the pipeline's existing structural order — figures claim
+first, tables second, line classes last. Migration flips WHO decides a class, never
+the order in which classes claim. Without this rule the "no other metric may regress"
+gate below would be noise. In the end state the rule vanishes on its own: one model,
+one label per line, regions derive from labels.
 
-1. Switch that class's decision to the model.
+For each class, worst current error rate first (so Formula and Table lead):
+
+1. Switch that class's routing decision to the model, in the rerouted path — the
+   line-plus-region cascade for `Table` and `Picture`, the line model alone for
+   line classes.
 2. Run DPBench. The relevant metric must improve and no other metric may regress.
 3. Run `entropy.pdf` and check the class visually against the page images.
 4. Only then delete the superseded heuristic and its constants.
@@ -204,19 +371,27 @@ Table lead):
    likely stroke clustering from vector paths, which the line feature vector may not
    capture well.
 
-**End state:** no hand-tuned decision thresholds remain. The rule code that survives
-does so as feature extractors only.
+Once every class is migrated, make the rerouted path the only path and delete the
+flag, the transitional precedence rule, and the superseded heuristic decision code.
 
-### Task 6: Validate
+**End state:** no hand-tuned CLASSIFICATION thresholds remain in `headings.go`,
+`figures.go` or `detect.go` decision paths. The rule code that survives does so as
+feature extractors and structure builders only. Line assembly, column detection and
+reading order keep their thresholds — out of scope for this project.
+
+### Task 7: Validate
 
 1. Full DPBench per the `AGENTS.md` protocol. **Rebuild `bin/docmill-bench` before
    benchmarking** — a stale binary silently reports the previous build's scores and has
    already caused a false conclusion in this project.
 2. Baseline to beat: extraction 0.922288, reading_order 0.895882, teds 0.763683,
-   mhs 0.770467, errors 0.
+   mhs 0.770467, errors 0. Because DPBench never entered training, this comparison
+   is a genuine held-out result, not a memory test.
 3. Latency: measure IN-PROCESS over the corpus, not via the subprocess harness, whose
-   variance is ±3 ms/page. Budget: inference should be a rounding error against the
-   current ~12–14 ms/page.
+   variance is ±3 ms/page. **The budget covers feature extraction PLUS inference**,
+   not tree walks alone: cross-page box repetition and nearby stroke density are the
+   costly features, not the model. Combined, they should be a rounding error against
+   the current ~12–14 ms/page.
 4. Record every delta in the handoff.
 
 ---
@@ -226,6 +401,18 @@ does so as feature extractors only.
 **Label alignment is where this fails, not training.** Matching docmill lines to
 HURIDOCS boxes by overlap is fiddly, and mislabelled rows produce a confidently wrong
 model. Budget real time for it and inspect samples by hand.
+
+**Training/serving skew.** Features must be computed by the same code AND the same
+assembly mode in the training dumps and at inference. The Task 2 emitter runs the
+class-agnostic path for exactly this reason. The Task 4 fixture test pins the
+predictor, but only the shared emitter pins the features. Candidate grouping and
+region features carry the same rule: generated for training by the embedded line
+model through the Go emitter, never reimplemented in Python.
+
+**Class-agnostic assembly creates lines that never existed before.** Cells inside
+tables and figures currently never reach the line assembler. Assembly behaviour on
+them (tall-delimiter corridors, dense gutter rows) is unproven; the Task 5 neutrality
+gate exists to flush this out before the model is in the loop.
 
 **Teacher errors become student errors.** Hence the Task 1 verification step. Both
 HURIDOCS paths are trained on DocLayNet, so its blind spots are inherited: `Picture`
@@ -239,8 +426,9 @@ PP-DocLayout-L does separate document title from paragraph title and would be th
 better teacher for that one problem.
 
 **Licensing must be confirmed before use.** Check the HURIDOCS model licence and
-whether its outputs may be used as training labels. DocLayNet itself is permissively
-licensed, but confirm rather than assume.
+whether its outputs may be used as training labels — and the licence of every
+training-corpus document, recorded at collection time (Task 1). DocLayNet itself is
+permissively licensed, but confirm rather than assume.
 
 **Granularity mismatch.** HURIDOCS' fast model classifies tokens; we classify lines.
 The IoU join must handle one-to-many cleanly.
