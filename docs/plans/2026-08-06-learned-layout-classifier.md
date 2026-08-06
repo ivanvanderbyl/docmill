@@ -25,8 +25,8 @@ equation — it correctly separates three `Formula` regions, three `Text` region
 the `Page footer`. That answers the only question that could kill this project: the
 signal is present in PDF features, not only in pixels.
 
-**Tech Stack:** Go (inference + codegen), Python + LightGBM (offline training),
-Docker (HURIDOCS labeller), DPBench (validation).
+**Tech Stack:** Go with `github.com/dmitryikh/leaves` + `go:embed` (inference),
+Python + LightGBM (offline training), Docker (HURIDOCS labeller), DPBench (validation).
 
 ---
 
@@ -55,6 +55,33 @@ requires running the heuristics at inference time to compute the starting score,
 makes them mandatory rather than removable — the opposite of the goal.
 
 ---
+
+### Task 0: Spike — prove the idea end to end on ONE class
+
+Do this before anything else. It is throwaway code whose only job is to answer "does
+this work at all", and it should take days rather than weeks. If it fails, the rest of
+the plan is not worth building.
+
+**Pick `Formula`.** It is the highest-value class (root cause of both the
+equation-as-heading and equation-as-table defects), HURIDOCS labels it well, and
+docmill currently has no dedicated detector for it, so there is a clean before/after.
+
+1. Run HURIDOCS over ~20 documents including `entropy.pdf`. Keep only `Formula` boxes.
+2. Emit docmill's assembled lines with a SMALL feature set — a dozen features, not the
+   full list in Task 2. Baseline count, font size ratio, alignment, gap above/below,
+   width fraction, cell count, italic fraction will do.
+3. Join by IoU, train a binary LightGBM (formula vs not), hold out whole documents.
+4. Embed via `leaves` and predict inside docmill.
+5. Compare against the current heuristics on `entropy.pdf`: how many of the nine
+   equation-headings and the residual fake-table regions does it catch, and how many
+   genuine headings or tables does it wrongly call formulas?
+
+**Success looks like:** the model beats the hand-tuned guards on formula regions with
+few enough false positives to be worth pursuing. **Failure looks like:** it cannot
+separate formulas from headings using docmill's geometry, which means the signal is not
+in our features and the full plan should be abandoned or rescoped.
+
+Report the number either way. A negative result here is a cheap and valuable outcome.
 
 ### Task 1: Measurement phase — an oracle for what we get wrong
 
@@ -119,23 +146,43 @@ decides which classes are worth replacing and which are already good. Record it 
    trees of limited depth. `AGENTS.md` requires detection to be "deterministic,
    repeatable, and explainable"; a decision path you can print satisfies that.
 
-### Task 4: Compile to Go
+### Task 4: Run the model in Go
+
+**Decision: use `github.com/dmitryikh/leaves` with `go:embed`, not codegen.** MIT
+licensed, pure Go, no cgo, multiclass supported. `LGEnsembleFromReader(*bufio.Reader,
+bool)` loads from memory, so embedding the artefact gives BOTH properties we want: no
+runtime disk dependency, and no exporter or tree-walker to write and maintain.
+(`LGEnsembleFromJSON` takes a plain `io.Reader` if the JSON dump proves easier.)
 
 **Files:**
-- Create: `pkg/pdf/layoutmodel_data.go` (generated, `// Code generated ... DO NOT EDIT.`)
 - Create: `pkg/pdf/layoutmodel.go`
+- Create: `pkg/pdf/layoutmodel.txt` (trained artefact, embedded)
 - Test: `pkg/pdf/layoutmodel_test.go`
 
-1. Export the trees as flat arrays: feature index, threshold, left child, right child,
-   leaf value. Generate Go from that. No external dependency, no ML runtime.
-2. The predictor is a loop over trees: walk to a leaf comparing one feature per node,
-   sum the leaf values, take the argmax class. Microseconds per page.
-3. Add an explain path: for any line, return the decision path and the contributing
-   features. This is the explainability requirement, and it is also how the next person
-   debugs a misclassification.
-4. **Pin the port with a fixture test**: a set of feature vectors and the scores the
-   Python model produced for them, asserted against the Go predictor. This catches
-   export bugs, index shifts and float drift, which are the realistic failure modes.
+```go
+//go:embed layoutmodel.txt
+var modelBytes []byte
+
+var model = sync.OnceValue(func() *leaves.Ensemble { ... })
+```
+
+1. Embed the artefact and load it once via `sync.OnceValue`. Nothing is read from disk
+   at runtime and nothing ships alongside the binary.
+2. Predict per line; take the argmax class.
+3. **Pin the port with a fixture test**: feature vectors plus the scores the Python
+   model produced for them, asserted against the Go path. This catches index shifts and
+   float drift, the realistic failure modes, and is the test proving the Python and Go
+   sides agree.
+4. Check what introspection `leaves` exposes for the explainability requirement. If it
+   cannot report a decision path, record that as a known gap against `AGENTS.md` rather
+   than quietly dropping the requirement.
+
+**Codegen is deferred, not rejected.** Generating flat tree arrays as Go source
+(feature index, threshold, children, leaf value) would remove the dependency, move
+model parsing from startup to compile time, and make a decision path trivial to print.
+Do it only if profiling shows `leaves` is too slow, or if the explainability gap in
+step 4 turns out to matter. The artefact is identical either way, so switching later is
+contained to this one file.
 
 ### Task 5: Migrate per class, then delete
 
