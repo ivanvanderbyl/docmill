@@ -22,3 +22,4 @@ benchmarks/dpbench/tools.others.json
 .worktrees/
 testdocs/*.pdf
 testdocs/*.md
+.venv-spike/
