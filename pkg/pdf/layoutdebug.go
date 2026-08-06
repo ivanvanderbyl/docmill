@@ -215,11 +215,22 @@ func currentLineClasses(state pageDebugState, options ExtractionOptions) []strin
 		}
 		// Mirror the zero-validity drop: those cells return to the paragraph
 		// path in production, so they must not count as tables here either.
+		kept := detected.Tables[:0]
 		for _, detectedTable := range detected.Tables {
 			if doctable.ValidityScore(detectedTable.Data) <= 0 {
 				remaining = append(remaining, detectedTable.TextCells...)
 				continue
 			}
+			kept = append(kept, detectedTable)
+		}
+		detected.Tables = kept
+		// With the Formula class migrated, the replay must apply the same veto,
+		// so `current` describes the pipeline being measured rather than the
+		// one it replaced.
+		if options.LearnedFormulaRouting {
+			detected, remaining = rejectFormulaTables(state.lines, state.cells, state.size, state.rulings, detected, remaining)
+		}
+		for _, detectedTable := range detected.Tables {
 			tableBoxes = append(tableBoxes, detectedTable.Box)
 		}
 		remaining = append(remaining, protectedTableCells...)

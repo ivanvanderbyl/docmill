@@ -84,6 +84,11 @@ type ExtractionOptions struct {
 	// DPBench before anything learned enters the loop. OFF by default; the
 	// default path is untouched.
 	ClassifyThenRoute bool
+	// LearnedFormulaRouting migrates the Formula class from the heuristics to
+	// the model within the rerouted path (Task 6). A candidate table whose
+	// lines are predominantly Formula is rejected and its cells return to the
+	// prose path. Requires ClassifyThenRoute; OFF by default.
+	LearnedFormulaRouting bool
 }
 
 const defaultMaxParallelPages = 12

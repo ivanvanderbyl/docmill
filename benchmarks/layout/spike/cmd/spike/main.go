@@ -80,6 +80,7 @@ func main() {
 func runEmit(args []string) error {
 	flags := flag.NewFlagSet("emit", flag.ContinueOnError)
 	listPath := flags.String("list", "", "file containing one PDF path per line")
+	learnedFormula := flags.Bool("learned-formula", false, "apply the migrated Formula routing when reporting the current class")
 	jobs := flags.Int("jobs", runtime.NumCPU(), "parallel workers")
 	quiet := flags.Bool("quiet", false, "suppress per-document progress")
 	if err := flags.Parse(args); err != nil {
@@ -113,7 +114,7 @@ func runEmit(args []string) error {
 		go func() {
 			defer wg.Done()
 			for path := range work {
-				rows, err := emitDocument(context.Background(), path)
+				rows, err := emitDocument(context.Background(), path, *learnedFormula)
 				if err != nil {
 					// One malformed PDF in a 80k-document corpus must not
 					// abandon the other 79,999; count it and carry on.
@@ -160,7 +161,7 @@ func runEmit(args []string) error {
 //
 // That last part is Task 1's baseline: the heuristics and the model have to be
 // scored on the SAME lines or the comparison means nothing.
-func emitDocument(ctx context.Context, path string) ([]lineRow, error) {
+func emitDocument(ctx context.Context, path string, learnedFormula bool) ([]lineRow, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -178,9 +179,10 @@ func emitDocument(ctx context.Context, path string) ([]lineRow, error) {
 	// The same options ExtractMarkdown uses, so the current-class column
 	// describes the pipeline users actually run.
 	return docpdf.LayoutDebugRows(ctx, doc, name, docpdf.ExtractionOptions{
-		DetectTables:    true,
-		ReadingOrder:    true,
-		DetectStructure: true,
-		DetectHeadings:  true,
+		DetectTables:          true,
+		ReadingOrder:          true,
+		DetectStructure:       true,
+		DetectHeadings:        true,
+		LearnedFormulaRouting: learnedFormula,
 	})
 }

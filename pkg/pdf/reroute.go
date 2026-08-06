@@ -92,6 +92,15 @@ func pageMarkdownBlocksRouted(ctx context.Context, cells []page.TextCell, wordCe
 		detectStart := time.Now()
 		_, detectSpan := tracer.Start(ctx, "pipeline.table_detect")
 		detected, remaining = detectPageTables(remaining, wordCells, rulings, size, options)
+
+		// Task 6, first migrated class: Formula. The label-set mapping is
+		// "display-equation handling; never table cells", and the measured
+		// defect is that 31% of DocLayNet's Formula lines are currently emitted
+		// as table cells. This is the fix.
+		if options.LearnedFormulaRouting {
+			detected, remaining = rejectFormulaTables(allLines, cells, size, rulings, detected, remaining)
+		}
+
 		detectSpan.SetAttributes(attribute.Int("tables", len(detected.Tables)))
 		detectSpan.End()
 		recordStage(ctx, "table_detect", detectStart)
@@ -313,3 +322,69 @@ func recordShadowRoutes(ctx context.Context, lines []ParagraphTextLine, headings
 	}
 	shadowSink(routes)
 }
+
+// rejectFormulaTables is the Formula class's migration from heuristic to model.
+//
+// The rule is a plurality vote, not a tuned threshold: a candidate table is
+// rejected when the most common label among the lines inside it is Formula.
+// That is argmax over the region's line-label distribution — precisely the
+// region feature the plan describes ("80% of these lines scored Formula is a
+// region feature") — so no hand-picked constant enters, which is the property
+// the whole project exists to establish.
+//
+// Rejected candidates return their cells to the prose path, exactly as the
+// existing zero-validity drop does. Nothing is deleted here: the heuristic
+// table detector still proposes every candidate, and the model only vetoes.
+// Deleting the superseded guards is a later step, gated on this measuring well.
+func rejectFormulaTables(lines []ParagraphTextLine, cells []page.TextCell, size geom.Size, rulings []page.RulingSegment, detected doctable.DetectionResult, remaining []page.TextCell) (doctable.DetectionResult, []page.TextCell) {
+	model, err := layoutModel()
+	if err != nil || model == nil || len(detected.Tables) == 0 || len(lines) == 0 {
+		return detected, remaining
+	}
+
+	// Features are computed with a nil document context, so repeat_frac is 0 —
+	// which is exactly the value the model was trained on, because DocLayNet is
+	// 81k single-page PDFs. Consistency here is not an accident; it is why
+	// DocumentLayoutContext.fraction reports 0 below two pages.
+	pageCtx := NewPageLayoutContext(size, cells, lines, rulings, 0, 1)
+
+	labels := make([]string, len(lines))
+	for i := range lines {
+		var prev, next *ParagraphTextLine
+		if i > 0 {
+			prev = &lines[i-1]
+		}
+		if i+1 < len(lines) {
+			next = &lines[i+1]
+		}
+		labels[i], _ = model.PredictLineClass(LineLayoutFeatures(lines[i], prev, next, pageCtx))
+	}
+
+	kept := detected.Tables[:0]
+	for _, candidate := range detected.Tables {
+		votes := map[string]int{}
+		for i, line := range lines {
+			if lineContainment(line.BBox, candidate.Box) >= 0.5 {
+				votes[labels[i]]++
+			}
+		}
+		winner, best := "", 0
+		for label, count := range votes {
+			if count > best || (count == best && label < winner) {
+				winner, best = label, count
+			}
+		}
+		if best > 0 && winner == layoutClassFormula {
+			remaining = append(remaining, candidate.TextCells...)
+			continue
+		}
+		kept = append(kept, candidate)
+	}
+	detected.Tables = kept
+	return detected, remaining
+}
+
+// layoutClassFormula is the model's label for a display equation. It matches
+// DocLayNet's class name, which is the teacher's vocabulary rather than
+// docmill's; the mapping onto docmill routing lives in the plan's label table.
+const layoutClassFormula = "Formula"

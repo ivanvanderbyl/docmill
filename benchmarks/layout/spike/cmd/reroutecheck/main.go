@@ -28,6 +28,7 @@ func main() {
 	corpus := flag.String("corpus", "benchmarks/dpbench/corpus/pdf", "directory of PDFs")
 	jobs := flag.Int("jobs", runtime.NumCPU(), "parallel workers")
 	show := flag.Int("show", 5, "how many differing documents to describe")
+	formula := flag.Bool("formula", false, "enable LearnedFormulaRouting on the rerouted side (Task 6)")
 	flag.Parse()
 
 	entries, err := os.ReadDir(*corpus)
@@ -66,7 +67,7 @@ func main() {
 				if i >= len(paths) {
 					return
 				}
-				results[i] = compare(paths[i])
+				results[i] = compare(paths[i], *formula)
 			}
 		}()
 	}
@@ -89,7 +90,9 @@ func main() {
 	fmt.Printf("documents: %d   identical: %d   differing: %d   errors: %d\n", len(paths), same, differ, failed)
 	if differ == 0 && failed == 0 {
 		fmt.Println("\nGATE PASSED: the rerouted path is byte-identical to the default path.")
-		reportStraddleRisk(paths, *jobs)
+		if !*formula {
+			reportStraddleRisk(paths, *jobs)
+		}
 		return
 	}
 	for i, r := range differing {
@@ -118,7 +121,7 @@ func truncate(s string) string {
 
 // compare converts one PDF through both paths. Options are identical except for
 // ClassifyThenRoute, so any difference is attributable to the reroute alone.
-func compare(path string) (out struct {
+func compare(path string, learnedFormula bool) (out struct {
 	name          string
 	equal         bool
 	defaultLen    int
@@ -144,11 +147,12 @@ func compare(path string) (out struct {
 		}
 		defer doc.Close()
 		return docpdf.ExtractMarkdownWithOptions(ctx, doc, docpdf.ExtractionOptions{
-			DetectTables:      true,
-			ReadingOrder:      true,
-			DetectStructure:   true,
-			DetectHeadings:    true,
-			ClassifyThenRoute: routed,
+			DetectTables:          true,
+			ReadingOrder:          true,
+			DetectStructure:       true,
+			DetectHeadings:        true,
+			ClassifyThenRoute:     routed,
+			LearnedFormulaRouting: routed && learnedFormula,
 		})
 	}
 
