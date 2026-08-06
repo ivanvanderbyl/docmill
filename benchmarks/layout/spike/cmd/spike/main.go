@@ -52,7 +52,7 @@ type lineRow struct {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: spike <emit|predict|verify|features> [args]")
+		fmt.Fprintln(os.Stderr, "usage: spike <emit|predict|verify|gen|explain|features> [args]")
 		os.Exit(2)
 	}
 	var err error
@@ -63,6 +63,10 @@ func main() {
 		err = runPredict(os.Args[2:])
 	case "verify":
 		err = runVerify(os.Args[2:])
+	case "gen":
+		err = runGen(os.Args[2:])
+	case "explain":
+		err = runExplain(os.Args[2:])
 	case "features":
 		// Print the feature-name contract so train.py can assert against it.
 		err = json.NewEncoder(os.Stdout).Encode(featureNames)

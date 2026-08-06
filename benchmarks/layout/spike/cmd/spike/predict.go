@@ -22,9 +22,14 @@ import (
 //go:embed layoutmodel.txt
 var layoutModelBytes []byte
 
-var layoutModel = sync.OnceValues(func() (*leaves.Ensemble, error) {
+// loadLayoutModel parses the artefact into trees. This is the work codegen
+// moves from start-up to compile time, so it is a named function to let
+// BenchmarkLeavesLoad measure exactly that cost.
+func loadLayoutModel() (*leaves.Ensemble, error) {
 	return leaves.LGEnsembleFromReader(bufio.NewReader(bytes.NewReader(layoutModelBytes)), true)
-})
+}
+
+var layoutModel = sync.OnceValues(loadLayoutModel)
 
 // predictionRow is one classified line, written as JSONL for eval.py.
 type predictionRow struct {

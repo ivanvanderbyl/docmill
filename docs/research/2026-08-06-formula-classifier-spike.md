@@ -171,7 +171,77 @@ fixture check above is what makes that an assertion rather than a hope.
 **Task 4 decision to record:** keep the one-line rewrite, pin LightGBM 3.x (EOL, no
 wheels past CPython 3.11), or take the codegen route the plan already holds in reserve.
 The rewrite is fine for the spike; the choice should be made deliberately before the
-model ships.
+model ships. The codegen option is now measured — see below.
+
+## Codegen versus `leaves`, measured
+
+The plan defers codegen: do it "only if profiling shows `leaves` is too slow, or if the
+explainability gap in step 4 turns out to matter." Both were cheap to settle, so `spike
+gen` now emits `layoutmodel_gen.go` — flat arrays of nodes, thresholds, child links and
+leaf values — alongside the `leaves` path, and the two are benchmarked against each
+other.
+
+First, a correction to the framing: **generated Go cannot be loaded into `leaves`.**
+`leaves.Ensemble` embeds an unexported `lgEnsemble` and exposes no constructor beyond
+its file/reader/JSON parsers, so nothing outside the package can build one. Codegen
+*replaces* `leaves`; it does not feed it.
+
+The model makes this easy. Every split in the artefact has `decision_type=2` and every
+tree `num_cat=0`, so there are no categorical splits and the decision is uniformly
+`if IsNaN(v) { v = 0 }; v <= threshold`. `spike gen` asserts both and refuses to
+generate otherwise, rather than emitting Go that scores differently from the trainer.
+`shrinkage` is ignored on purpose — LightGBM bakes the learning rate into `leaf_value`
+in the text format, and `leaves` ignores it too.
+
+**Equivalence.** The generated path reproduces LightGBM's fixture scores, and against
+`leaves` over 200,000 random vectors — including NaN in every feature position — the
+worst difference is **exactly 0.0**. Not "within tolerance": bit-identical.
+
+**Performance** (Xeon @ 2.20 GHz, 300 trees, 20 features, `-benchtime 2s -count 3`):
+
+| | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| `leaves.PredictSingle` | 25,870 | 16 | 2 |
+| generated, flat arrays | **17,410** | **0** | **0** |
+| generated, interleaved nodes | 17,800 | 0 | 0 |
+| `leaves` model load (once) | 8,000,000 | 3.28 MB | 17,745 |
+
+Codegen is ~33% faster per prediction, allocation-free, and removes an 8 ms / 3.3 MB /
+17.7k-allocation start-up parse entirely.
+
+Interleaving the four parallel arrays into one 24-byte node record — two per cache line
+— **did not pay**: 17.8 µs against 17.4 µs, a wash. So the walk is not bound by cache
+lines per node but by branch misprediction on a data-dependent traversal, which no
+layout change fixes. Recorded so Task 4 does not repeat the experiment.
+
+Keep the absolute numbers in proportion: at ~45 lines per page, 17.4 µs/line is about
+0.8 ms/page against the current ~12–14 ms/page, and `leaves` would be ~1.2 ms. Both are
+affordable; neither is the reason to choose.
+
+**The explainability gap closes.** Task 4 step 4 asks what introspection `leaves`
+exposes and says to record a gap against `AGENTS.md` if a decision path cannot be
+reported. `leaves` exposes scores only. Generated code walks the same trees and can say
+why — `spike explain <pdf>` prints, per line, the trees that moved the score most with
+their full split path, plus which features the vector was tested against most:
+
+```
+=== page 25 line 41: "log P = log Q +"
+score=0.984062 (raw 4.122959, 300 trees)
+  tree   0  leaf -1.17694  math_frac=0.2 > 0.09938 | left_frac=0.4382 > 0.1834 | ...
+  tree   1  leaf +0.19832  math_frac=0.2 > 0.09938 | left_frac=0.4382 > 0.1834 | ...
+most-tested features on this vector:
+  left_frac              tested 186 times, value 0.4382
+  y_center_frac          tested 151 times, value 0.8677
+```
+
+**Recommendation for Task 4: generate.** It is faster, allocation-free, has no start-up
+cost, drops a third-party dependency, removes the `version=v4` header problem along with
+the parser that caused it, and satisfies the explainability requirement instead of
+booking a gap against it. The costs are a generator to maintain (~250 lines), a
+bootstrap ordering wrinkle (the generated file must exist before the generator that
+writes it will compile — a placeholder breaks the cycle), and 843 KB of generated Go in
+place of a 979 KB embedded artefact. The equivalence tests are what make this safe to
+switch; keep them.
 
 ## Top features by gain
 
