@@ -79,7 +79,7 @@ func TestRunConvertAcceptsLearnedLayoutFlagBeforePath(t *testing.T) {
 func TestConvertOptionsDefaultMatchesExtractMarkdown(t *testing.T) {
 	t.Parallel()
 
-	options := convertOptions(false)
+	options := convertOptions(false, false)
 
 	require.True(t, options.DetectTables)
 	require.True(t, options.ReadingOrder)
@@ -94,7 +94,7 @@ func TestConvertOptionsDefaultMatchesExtractMarkdown(t *testing.T) {
 func TestConvertOptionsLearnedLayoutEnablesTheWholeLearnedPath(t *testing.T) {
 	t.Parallel()
 
-	options := convertOptions(true)
+	options := convertOptions(true, false)
 
 	// LearnedRouting is only consulted on the rerouted path, and the Formula
 	// veto is a separate gate — the flag has to set all three or it silently
@@ -136,4 +136,21 @@ func TestRunConvertExtractsMarkdownFromFixture(t *testing.T) {
 
 	require.Empty(t, stderr.String())
 	require.Contains(t, stdout.String(), "코로나-19")
+}
+
+func TestConvertOptionsLearnedColumnsIsIndependent(t *testing.T) {
+	// -learned-columns changes table STRUCTURE, -learned-layout changes which
+	// regions are what. They must be selectable separately or their effects
+	// cannot be measured apart — TEDS moves for one, the class metrics for the
+	// other.
+	columnsOnly := convertOptions(false, true)
+	require.True(t, columnsOnly.LearnedColumns)
+	require.True(t, columnsOnly.ClassifyThenRoute, "learned columns need the rerouted path for rulings")
+	require.False(t, columnsOnly.LearnedRouting)
+
+	layoutOnly := convertOptions(true, false)
+	require.True(t, layoutOnly.LearnedRouting)
+	require.False(t, layoutOnly.LearnedColumns)
+
+	require.False(t, convertOptions(false, false).ClassifyThenRoute, "default path must stay untouched")
 }

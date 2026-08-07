@@ -26,3 +26,5 @@ entropy.md
 entropy.pdf
 entropy.*.md
 .venv-spike/
+benchmarks/dpbench/results/
+benchmarks/dpbench/tools.cols.json

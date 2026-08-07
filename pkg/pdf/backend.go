@@ -96,6 +96,11 @@ type ExtractionOptions struct {
 	// the final step, once this measures well on every class. Requires
 	// ClassifyThenRoute; OFF by default.
 	LearnedRouting bool
+	// LearnedColumns derives table column boundaries with the FinTabNet-trained
+	// model instead of the densest-row heuristic. Independent of the line
+	// model: it changes table STRUCTURE, which is what TEDS scores, rather than
+	// which regions are tables. OFF by default.
+	LearnedColumns bool
 }
 
 const defaultMaxParallelPages = 12

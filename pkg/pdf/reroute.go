@@ -186,6 +186,9 @@ func pageMarkdownBlocksRouted(ctx context.Context, cells []page.TextCell, wordCe
 // so both paths share one definition. Extracting it is what makes "the reroute
 // changes the ORDER, not the decisions" checkable rather than merely claimed.
 func detectPageTables(cells []page.TextCell, wordCells []page.TextCell, rulings []page.RulingSegment, size geom.Size, options ExtractionOptions) (doctable.DetectionResult, []page.TextCell) {
+	if options.LearnedColumns {
+		defer doctable.SetColumnDerivation(true, rulings)()
+	}
 	tableProtected := denseIndexLineCellIndexes(cells, size)
 	tableCells, protectedTableCells := splitCellsByIndexSet(cells, tableProtected)
 	detected := doctable.DetectTables(tableCells, rulings, options.TableDetection)

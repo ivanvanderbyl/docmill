@@ -18,6 +18,8 @@ func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	flags.SetOutput(stderr)
 	learnedLayout := flags.Bool("learned-layout", false,
 		"classify lines with the embedded layout model instead of the hand-tuned detectors (headings, list items, figure innards, formulas)")
+	learnedColumns := flags.Bool("learned-columns", false,
+		"derive table column boundaries with the FinTabNet-trained model instead of the densest-row heuristic")
 	// No stripArgSeparator here: "--" is the flag package's own end-of-flags
 	// terminator, so parsing directly keeps `convert -- <path>` working and also
 	// lets a path that begins with "-" through.
@@ -27,7 +29,7 @@ func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) er
 
 	rest := flags.Args()
 	if len(rest) != 1 {
-		err := fmt.Errorf("usage: docmill [convert] [-learned-layout] <input.pdf>")
+		err := fmt.Errorf("usage: docmill [convert] [-learned-layout] [-learned-columns] <input.pdf>")
 		_, _ = fmt.Fprintln(stderr, err)
 		return err
 	}
@@ -52,7 +54,7 @@ func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	}
 	defer doc.Close()
 
-	markdown, err := docpdf.ExtractMarkdownWithOptions(ctx, doc, convertOptions(*learnedLayout))
+	markdown, err := docpdf.ExtractMarkdownWithOptions(ctx, doc, convertOptions(*learnedLayout, *learnedColumns))
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "extract Markdown: %v\n", err)
 		return err
@@ -67,7 +69,7 @@ func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) er
 //
 // Without the flag the options are exactly ExtractMarkdown's, so the default
 // conversion stays byte-identical to what it produces today.
-func convertOptions(learnedLayout bool) docpdf.ExtractionOptions {
+func convertOptions(learnedLayout, learnedColumns bool) docpdf.ExtractionOptions {
 	options := docpdf.ExtractionOptions{
 		DetectTables:    true,
 		ReadingOrder:    true,
@@ -84,6 +86,14 @@ func convertOptions(learnedLayout bool) docpdf.ExtractionOptions {
 		options.ClassifyThenRoute = true
 		options.LearnedRouting = true
 		options.LearnedFormulaRouting = true
+	}
+	if learnedColumns {
+		// Independent of -learned-layout: this changes table STRUCTURE (what
+		// TEDS scores) rather than which regions are tables, so the two are
+		// measurable separately. It still needs the rerouted path, which is
+		// where the rulings reach the detector.
+		options.ClassifyThenRoute = true
+		options.LearnedColumns = true
 	}
 	return options
 }
