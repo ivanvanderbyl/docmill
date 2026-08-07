@@ -65,64 +65,48 @@ func pageMarkdownBlocksRegionRouted(ctx context.Context, cells []page.TextCell, 
 	// come out of SelectRegions rank-ordered, so first claim wins, and a line
 	// no region claims falls through to the leftover pass below — nothing on
 	// the page is ever silently dropped except what a Picture region absorbs.
+	paragraphOptions := ParagraphOptions{EnableInlineFormatting: options.EnableInlineFormatting}
 	claimed := make([]bool, len(lines))
 	var blocks []markdownBlock
 	for _, region := range regions {
 		member := make([]ParagraphTextLine, 0, len(region.Proposal.Lines))
+		memberLabels := make([]string, 0, len(region.Proposal.Lines))
 		for _, index := range region.Proposal.Lines {
 			if index >= 0 && index < len(lines) && !claimed[index] {
 				claimed[index] = true
 				member = append(member, lines[index])
+				memberLabels = append(memberLabels, labeller.labels[index])
 			}
 		}
 		if len(member) == 0 && region.Class != layoutClassPicture {
 			continue
 		}
-		block, ok := regionBlock(region, member, wordCells, rulings, size, options)
-		if ok {
-			blocks = append(blocks, block)
-		}
+		blocks = append(blocks, regionBlocks(region, member, memberLabels, paragraphOptions, wordCells, rulings, options)...)
 	}
 
-	// Leftovers: lines no region claimed. Grouped on geometry alone — the same
-	// atomic grouping the proposer uses — and rendered as plain paragraphs.
+	// Leftovers: lines no region claimed, rendered through the SAME paragraph
+	// assembler the default pipeline uses. The first version joined line texts
+	// with spaces, and the seams showed: "Vol. 27, pp." came out "Vol . 27 ,
+	// pp ." because the assembler's spacing decisions were being redone badly,
+	// and hyphenated line breaks lost their hyphens. One text builder, both
+	// paths.
 	var leftovers []ParagraphTextLine
 	for i, line := range lines {
 		if !claimed[i] {
 			leftovers = append(leftovers, line)
 		}
 	}
-	for _, group := range atomicLineGroups(leftovers, coarseGapRatio) {
-		var texts []string
-		box := geom.Box{}
-		index := int(^uint(0) >> 1)
-		for j, lineIndex := range group.lines {
-			line := leftovers[lineIndex]
-			texts = append(texts, strings.TrimSpace(line.Text))
-			if j == 0 {
-				box = line.BBox
-			} else {
-				box = unionBoxes(box, line.BBox)
-			}
-			if line.MinIndex < index {
-				index = line.MinIndex
-			}
-		}
-		if text := strings.TrimSpace(strings.Join(texts, " ")); text != "" {
-			blocks = append(blocks, markdownBlock{
-				Index: index, Text: text, Box: box,
-				LineCount: len(group.lines),
-			})
-		}
-	}
+	blocks = append(blocks, assembleParagraphs(leftovers, paragraphOptions)...)
 
 	blocks = append(blocks, formBlocks...)
 	sortMarkdownBlocks(blocks, size, !options.ReadingOrder)
 	return blocks, nil
 }
 
-// regionBlock renders one kept region according to its class.
-func regionBlock(region ScoredProposal, member []ParagraphTextLine, wordCells []page.TextCell, rulings []page.RulingSegment, size geom.Size, options ExtractionOptions) (markdownBlock, bool) {
+// regionBlocks renders one kept region according to its class. It returns a
+// slice because a region legitimately yields several blocks — a Text region
+// holding two paragraphs, a Picture region yielding its rescued caption.
+func regionBlocks(region ScoredProposal, member []ParagraphTextLine, memberLabels []string, paragraphOptions ParagraphOptions, wordCells []page.TextCell, rulings []page.RulingSegment, options ExtractionOptions) []markdownBlock {
 	box := region.Proposal.Box
 	index := int(^uint(0) >> 1)
 	var texts []string
@@ -140,34 +124,65 @@ func regionBlock(region ScoredProposal, member []ParagraphTextLine, wordCells []
 		// axis labels, legend fragments — and dropping them is the point.
 		// Captions are their own regions and survive on their own merits.
 		//
-		// But only when there is INK. A real figure contains an image, paths,
-		// or a shading; a "Picture" made of nothing but text lines is a
-		// misclassification wearing a green box, and honouring it deletes a
-		// paragraph. Measured on DPBench, region-routed output was keeping
-		// 90.7% of the default path's characters, and text-only Picture
-		// regions were the largest hole. The classification is the model's
-		// call; destroying text on its say-so alone is not.
-		if region.Proposal.Ink.Ink > 0 {
-			return markdownBlock{}, false
+		// Two guards temper that. A "Picture" with no INK is a
+		// misclassification wearing a green box, and its text survives as
+		// prose. And a member line the LINE model calls Caption is rescued:
+		// on the held-out Shannon sample the picture box over-reached by one
+		// line and silently ate "Fig. 1 — Schematic diagram of a general
+		// communication system". The region model owns the figure; it does
+		// not own the caption's deletion when a second model disagrees.
+		if region.Proposal.Ink.Ink == 0 {
+			if len(member) == 0 {
+				return nil
+			}
+			return assembleParagraphs(member, paragraphOptions)
 		}
-		if text == "" {
-			return markdownBlock{}, false
+		var rescued []ParagraphTextLine
+		for i, line := range member {
+			if memberLabels[i] == "Caption" {
+				rescued = append(rescued, line)
+			}
 		}
-		return markdownBlock{Index: index, Box: box, LineCount: len(member), Text: text}, true
+		if len(rescued) > 0 {
+			return assembleParagraphs(rescued, paragraphOptions)
+		}
+		return nil
 
 	case layoutClassSectionHeader, layoutClassTitle:
+		// Two guards before anything becomes part of the document outline.
+		//
+		// If the LINE model calls the lines Formula, the region model has been
+		// fooled by geometry — short, centred, isolated is the shape of a
+		// title, worn by mathematics.
+		//
+		// And if the TEXT is dense with digits and operators, both models have
+		// been fooled: on the held-out Shannon sample "log2 M log10 M log10 2"
+		// carried Section-header votes from both, because nothing geometric
+		// distinguishes it from a heading. A third of its characters are
+		// digits, and no real heading reads like that. This is a renderer
+		// guard, not a classification: the text stays, only its promotion into
+		// the outline is refused.
+		formulaVotes := 0
+		for _, label := range memberLabels {
+			if label == "Formula" {
+				formulaVotes++
+			}
+		}
+		if text == "" {
+			return nil
+		}
+		if formulaVotes*2 > len(memberLabels) || headingReadsAsMath(member) {
+			return assembleParagraphs(member, paragraphOptions)
+		}
 		level := 2
 		if region.Class == layoutClassTitle {
 			level = 1
 		}
-		if text == "" {
-			return markdownBlock{}, false
-		}
-		return markdownBlock{
+		return []markdownBlock{{
 			Index: index, Box: box, LineCount: len(member),
 			HeadingLevel: level,
 			Text:         strings.Repeat("#", level) + " " + text,
-		}, true
+		}}
 
 	case layoutClassListItem:
 		// One region may hold several visual items; each LINE that starts
@@ -188,12 +203,12 @@ func regionBlock(region ScoredProposal, member []ParagraphTextLine, wordCells []
 			}
 		}
 		if len(items) == 0 {
-			return markdownBlock{}, false
+			return nil
 		}
-		return markdownBlock{
+		return []markdownBlock{{
 			Index: index, Box: box, LineCount: len(member),
 			Text: strings.Join(items, "\n"),
-		}, true
+		}}
 
 	case layoutClassTable:
 		// The model owns WHERE the table is; the existing grid machinery owns
@@ -229,28 +244,45 @@ func regionBlock(region ScoredProposal, member []ParagraphTextLine, wordCells []
 					parts = append(parts, leftover)
 				}
 				if len(parts) > 0 {
-					return markdownBlock{
+					return []markdownBlock{{
 						Index: index, Box: box,
 						Text:      strings.Join(parts, "\n\n"),
 						tableData: firstData,
 						tableBox:  firstBox,
-					}, true
+					}}
 				}
 			}
 		}
 		// No grid found inside the box: the region keeps its content as prose.
-		if text == "" {
-			return markdownBlock{}, false
+		if len(member) == 0 {
+			return nil
 		}
-		return markdownBlock{Index: index, Box: box, LineCount: len(member), Text: text}, true
+		return assembleParagraphs(member, paragraphOptions)
 
 	default:
-		// Text, Caption, Formula, Footnote, Page-header, Page-footer: prose.
-		if text == "" {
-			return markdownBlock{}, false
+		// Text, Caption, Formula, Footnote, Page-header, Page-footer: prose,
+		// through the same paragraph assembler as the default pipeline.
+		if len(member) == 0 {
+			return nil
 		}
-		return markdownBlock{Index: index, Box: box, LineCount: len(member), Text: text}, true
+		return assembleParagraphs(member, paragraphOptions)
 	}
+}
+
+// headingReadsAsMath reports whether a would-be heading's characters are
+// dominated by digits and mathematical symbols.
+func headingReadsAsMath(member []ParagraphTextLine) bool {
+	mathChars, digitChars, totalChars := 0, 0, 0
+	for _, line := range member {
+		counts := countLineRunes(line)
+		mathChars += counts.math
+		digitChars += counts.digit
+		totalChars += counts.chars
+	}
+	if totalChars == 0 {
+		return false
+	}
+	return float64(mathChars+digitChars)/float64(totalChars) > 0.2
 }
 
 // joinCellTexts flattens leftover cells into reading-order prose.
