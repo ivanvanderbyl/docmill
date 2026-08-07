@@ -126,6 +126,12 @@ func (e *Ensemble) RawScores(features []float64, out []float64) {
 	}
 	for tree, root := range e.treeRoot {
 		node := root
+		// A negative root IS a leaf: the tree has no splits and predicts a
+		// constant. Descending from it would index the node array out of range.
+		if node < 0 {
+			out[tree%e.numClass] += e.leafValue[-node-1]
+			continue
+		}
 		for {
 			value := features[e.nodeFeature[node]]
 			// LightGBM compares with `<=`, and with missing_type None — which
@@ -208,6 +214,16 @@ func (e *Ensemble) PredictProbabilities(features []float64) []float64 {
 		scores[i] /= sum
 	}
 	return scores
+}
+
+// PredictRaw returns the summed leaf value of a single-output model, with no
+// link function applied. That is what a regression objective wants: unlike the
+// binary case there is no sigmoid, and passing the score through one would
+// squash a prediction that is already in the target's units.
+func (e *Ensemble) PredictRaw(features []float64) float64 {
+	scores := make([]float64, e.numClass)
+	e.RawScores(features, scores)
+	return scores[0]
 }
 
 // PredictBinary returns P(positive) for a single-output model.

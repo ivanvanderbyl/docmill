@@ -53,6 +53,7 @@ func runPropose(args []string) error {
 	quiet := flags.Bool("quiet", false, "suppress per-document progress")
 	splitColumns := flags.Bool("split-columns", false, "split assembled lines at persistent column gaps first")
 	selected := flags.Bool("select", false, "classify and suppress, emitting only the regions that survive")
+	noSuppress := flags.Bool("no-suppress", false, "with -select, skip non-max suppression")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -84,7 +85,7 @@ func runPropose(args []string) error {
 		go func() {
 			defer wg.Done()
 			for path := range work {
-				rows, err := proposeDocument(context.Background(), path, *splitColumns, *selected)
+				rows, err := proposeDocument(context.Background(), path, *splitColumns, *selected, !*noSuppress)
 				if err != nil {
 					failures.Add(1)
 					fmt.Fprintf(os.Stderr, "skip %s: %v\n", filepath.Base(path), err)
@@ -123,7 +124,7 @@ func runPropose(args []string) error {
 	return nil
 }
 
-func proposeDocument(ctx context.Context, path string, splitColumns, selected bool) ([]proposalRow, error) {
+func proposeDocument(ctx context.Context, path string, splitColumns, selected, suppress bool) ([]proposalRow, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -138,7 +139,7 @@ func proposeDocument(ctx context.Context, path string, splitColumns, selected bo
 	defer doc.Close()
 
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	pages, err := docpdf.PageRegionProposals(ctx, doc, splitColumns, selected)
+	pages, err := docpdf.PageRegionProposals(ctx, doc, splitColumns, selected, suppress)
 	if err != nil {
 		return nil, err
 	}

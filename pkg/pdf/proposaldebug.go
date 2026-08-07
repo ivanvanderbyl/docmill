@@ -34,7 +34,7 @@ type PageProposals struct {
 //
 // The lines here are assembled class-agnostically — no figure drops, no table
 // carve-outs — because that is the line set the classifier sees at inference.
-func PageRegionProposals(ctx context.Context, doc Document, splitColumns, selected bool) ([]PageProposals, error) {
+func PageRegionProposals(ctx context.Context, doc Document, splitColumns, selected, suppress bool) ([]PageProposals, error) {
 	count, err := doc.PageCount(ctx)
 	if err != nil {
 		return nil, err
@@ -84,7 +84,17 @@ func PageRegionProposals(ctx context.Context, doc Document, splitColumns, select
 		proposals := ProposeRegions(lines, GroupInkClusters(drawn, size), size)
 
 		result := PageProposals{Page: index + 1, Size: size, Proposals: proposals}
-		if labeller := newLineLabeller(lines, cells, size, rulings); labeller.ok {
+		labeller := newLineLabeller(lines, cells, size, rulings)
+		if !labeller.ok && selected {
+			// With selection asked for, an unavailable line model means no
+			// classification happened. Emitting the raw proposals here would
+			// hand the caller hundreds of unclassified boxes wearing the same
+			// shape as a decomposition.
+			result.Proposals = nil
+			out = append(out, result)
+			continue
+		}
+		if labeller.ok {
 			in := ProposalFeatureInput{
 				Lines:   lines,
 				Labels:  labeller.labels,
@@ -93,7 +103,21 @@ func PageRegionProposals(ctx context.Context, doc Document, splitColumns, select
 				Size:    size,
 			}
 			if selected {
-				kept := SelectRegions(ClassifyProposals(proposals, in))
+				scored := ClassifyProposals(proposals, in)
+				kept := scored
+				if suppress {
+					kept = SelectRegions(scored)
+				} else {
+					// Classified but not suppressed: everything the model did
+					// not call Background. Comparing the two isolates whether
+					// recall is lost by the classifier or by suppression.
+					kept = kept[:0]
+					for _, candidate := range scored {
+						if candidate.Class != "" && candidate.Class != layoutClassBackground {
+							kept = append(kept, candidate)
+						}
+					}
+				}
 				result.Proposals = make([]RegionProposal, 0, len(kept))
 				result.Classes = make([]string, 0, len(kept))
 				result.Scores = make([]float64, 0, len(kept))

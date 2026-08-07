@@ -97,3 +97,33 @@ func TestSelectRegionsTiesGoToTheLargerBox(t *testing.T) {
 		t.Errorf("kept the smaller box on a tie; want the larger one")
 	}
 }
+
+func TestRankPrefersTheBetterExtent(t *testing.T) {
+	// The measured failure, as a test. Two candidates the classifier likes
+	// equally: one is the right size, one is a near miss. Class probability
+	// alone cannot separate them — their content is nearly identical — so the
+	// IoU head has to.
+	nearMiss := scored(layoutClassTable, 0.90, 50, 100, 500, 380)
+	nearMiss.Overlap = 0.55
+	correct := scored(layoutClassTable, 0.88, 50, 100, 500, 400)
+	correct.Overlap = 0.95
+
+	if nearMiss.Rank() >= correct.Rank() {
+		t.Fatalf("near miss ranks %.4f, correct ranks %.4f — the IoU head is not deciding",
+			nearMiss.Rank(), correct.Rank())
+	}
+	got := SelectRegions([]ScoredProposal{nearMiss, correct})
+	if len(got) != 1 || bottomEdgeOf(got[0].Proposal.Box) != 400 {
+		t.Errorf("kept %+v, want the correct extent ending at 400", got)
+	}
+}
+
+func TestRankFallsBackWithoutTheIoUHead(t *testing.T) {
+	// Overlap zero means the head is unavailable, not that the extent is bad.
+	// Ranking by zero would make every candidate tie and turn suppression into
+	// an arbitrary pick.
+	candidate := scored(layoutClassTable, 0.75, 50, 100, 500, 400)
+	if candidate.Rank() != 0.75 {
+		t.Errorf("Rank = %v with no IoU head, want the class probability 0.75", candidate.Rank())
+	}
+}

@@ -129,9 +129,12 @@ func parse(path string) ([]tree, modelMeta, error) {
 			}
 			meta.numFeatures = n + 1
 		case "objective":
-			// The Go side applies softmax for multiclass and a logistic for
-			// binary; anything else must stop the build.
-			if !strings.HasPrefix(value, "multiclass ") && value != "binary sigmoid:1" {
+			// The Go side applies softmax for multiclass, a logistic for
+			// binary, and nothing at all for regression — PredictRaw returns
+			// the summed leaf value, which is already in the target's units.
+			// Anything else must stop the build rather than be scored through
+			// the wrong link function.
+			if !strings.HasPrefix(value, "multiclass ") && value != "binary sigmoid:1" && value != "regression" {
 				return nil, meta, fmt.Errorf("unsupported objective %q", value)
 			}
 		case "Tree":
@@ -237,7 +240,18 @@ func pack(trees []tree, meta modelMeta, classes []string) ([]byte, error) {
 			return nil, fmt.Errorf("ragged node arrays")
 		}
 		nodeBase, leafBase := int32(len(feature)), int32(len(leaf))
-		roots = append(roots, nodeBase)
+		if len(t.feature) == 0 {
+			// A tree with no splits: LightGBM emits these for a class it can
+			// predict with a constant, which happens as soon as a class is rare
+			// enough that boosting finds no useful split. Pointing the root at
+			// nodeBase would aim it one past the end of the node array, because
+			// this tree contributes no nodes — a crash at inference, not a
+			// wrong answer, and only on models that happen to contain one.
+			// Encode the root as the leaf itself instead.
+			roots = append(roots, -leafBase-1)
+		} else {
+			roots = append(roots, nodeBase)
+		}
 		leaf = append(leaf, t.leaf...)
 		link := func(child int32) int32 {
 			if child >= 0 {

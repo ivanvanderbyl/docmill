@@ -49,6 +49,28 @@ type ScoredProposal struct {
 	// separately because it is the useful thing to threshold on when a caller
 	// wants to trade recall for precision.
 	Background float64
+	// Overlap is the IoU head's estimate of how well this extent matches the
+	// region it is trying to be. Zero when the head is unavailable.
+	Overlap float64
+}
+
+// Rank is what suppression sorts by.
+//
+// Class probability alone cannot do this job, and the failure is measurable
+// rather than theoretical. A table proposed one line short and the same table
+// proposed correctly have nearly identical CONTENT features, so the classifier
+// scores them nearly the same and suppression picks between them almost at
+// random. Measured that way, recall halved on every structural class:
+// Table 0.741 -> 0.281, Page-header 0.696 -> 0.350, Picture 0.582 -> 0.264.
+//
+// The IoU head answers the question the classifier cannot — how good is this
+// EXTENT — and the product ranks a candidate that is both the right kind of
+// thing and the right size above one that is merely the right kind of thing.
+func (s ScoredProposal) Rank() float64 {
+	if s.Overlap <= 0 {
+		return s.Score
+	}
+	return s.Score * s.Overlap
 }
 
 // SelectRegions reduces scored candidates to a non-overlapping decomposition of
@@ -70,8 +92,9 @@ func SelectRegions(scored []ScoredProposal) []ScoredProposal {
 	}
 
 	sort.SliceStable(candidates, func(a, b int) bool {
-		if candidates[a].Score != candidates[b].Score {
-			return candidates[a].Score > candidates[b].Score
+		rankA, rankB := candidates[a].Rank(), candidates[b].Rank()
+		if rankA != rankB {
+			return rankA > rankB
 		}
 		// Ties go to the larger candidate. A tie means the model cannot
 		// distinguish them, and the larger box is the one that keeps more

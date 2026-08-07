@@ -3,6 +3,7 @@ package pdf
 import (
 	_ "embed"
 	"fmt"
+	"math"
 	"sync"
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/gbm"
@@ -27,6 +28,26 @@ import (
 
 //go:embed proposalmodel.bin
 var proposalModelBlob []byte
+
+// The IoU head, a single-output regressor over the SAME feature vector. It
+// answers the one question the classifier structurally cannot: not "what is
+// this" but "is this the right size for what it is". See ScoredProposal.Rank
+// for the measurement that made it necessary.
+
+//go:embed proposaliou.bin
+var proposalIoUBlob []byte
+
+var proposalIoUModel = sync.OnceValues(func() (*gbm.Ensemble, error) {
+	model, err := gbm.Decode(proposalIoUBlob)
+	if err != nil {
+		return nil, err
+	}
+	if model.NumFeatures() != len(ProposalFeatureNames) {
+		return nil, fmt.Errorf("IoU head expects %d features, pkg/pdf defines %d — the feature contract has drifted",
+			model.NumFeatures(), len(ProposalFeatureNames))
+	}
+	return model, nil
+})
 
 var proposalModel = sync.OnceValues(func() (*gbm.Ensemble, error) {
 	model, err := gbm.Decode(proposalModelBlob)
@@ -65,10 +86,19 @@ func ClassifyProposals(proposals []RegionProposal, in ProposalFeatureInput) []Sc
 		return nil
 	}
 
+	// The IoU head is optional. Without it Rank falls back to class
+	// probability alone, which is the measured-bad behaviour but still a
+	// working pipeline rather than an empty page.
+	iouModel, iouErr := proposalIoUModel()
+
 	backgroundIndex := 0 // proposalLabelOrder[0]
 	scored := make([]ScoredProposal, 0, len(proposals))
 	for _, proposal := range proposals {
-		probabilities := model.PredictProbabilities(ProposalFeatures(proposal, in))
+		// Computed once and reused by both heads. The feature vector is the
+		// expensive part of this loop by a wide margin, and the two models read
+		// exactly the same one by construction.
+		features := ProposalFeatures(proposal, in)
+		probabilities := model.PredictProbabilities(features)
 		if len(probabilities) != len(proposalLabelOrder) {
 			return nil
 		}
@@ -78,12 +108,19 @@ func ClassifyProposals(proposals []RegionProposal, in ProposalFeatureInput) []Sc
 				best = i
 			}
 		}
-		scored = append(scored, ScoredProposal{
+		candidate := ScoredProposal{
 			Proposal:   proposal,
 			Class:      proposalLabelOrder[best],
 			Score:      probabilities[best],
 			Background: probabilities[backgroundIndex],
-		})
+		}
+		if iouErr == nil && iouModel != nil {
+			// The regressor is unbounded; IoU is not. Clamping keeps Rank a
+			// product of two quantities in [0,1] so neither can dominate by
+			// running off the end of its range.
+			candidate.Overlap = math.Min(1, math.Max(0, iouModel.PredictRaw(features)))
+		}
+		scored = append(scored, candidate)
 	}
 	return scored
 }

@@ -66,11 +66,21 @@ def main():
             ]
 
     kept_by_page = collections.defaultdict(list)
+    corrupt = 0
     with open(args.regions) as handle:
         for raw in handle:
-            row = json.loads(raw)
-            if row["doc"] in pages and row.get("score", 0) >= args.min_score:
+            # A progress line written to the same stream can land inside a JSON
+            # line. Skipping and COUNTING beats failing, but the count has to be
+            # reported: silently dropped regions read as recall loss.
+            try:
+                row = json.loads(raw)
+            except json.JSONDecodeError:
+                corrupt += 1
+                continue
+            if row.get("doc") in pages and row.get("score", 0) >= args.min_score:
                 kept_by_page[row["doc"]].append(row)
+    if corrupt:
+        print(f"WARNING: skipped {corrupt} unparseable lines\n")
 
     tp = collections.Counter()
     fp = collections.Counter()
