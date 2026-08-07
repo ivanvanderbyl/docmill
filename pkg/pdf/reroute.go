@@ -77,6 +77,13 @@ func pageMarkdownBlocksRouted(ctx context.Context, cells []page.TextCell, wordCe
 	if options.LearnedRouting {
 		_, finishStage := startStage(ctx, "layout_classify")
 		labeller = newLineLabeller(allLines, cells, size, rulings)
+		if options.LearnedRegions && labeller.ok {
+			gapCells := wordCells
+			if len(gapCells) == 0 {
+				gapCells = cells
+			}
+			labeller.gateRegions(gapCells, rulings, size, layoutClassPicture)
+		}
 		finishStage(nil)
 	}
 

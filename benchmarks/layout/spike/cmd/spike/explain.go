@@ -25,7 +25,7 @@ func runExplain(args []string) error {
 		count = n
 	}
 
-	rows, err := emitDocument(context.Background(), args[0], false, false)
+	rows, err := emitDocument(context.Background(), args[0], false, false, false)
 	if err != nil {
 		return err
 	}

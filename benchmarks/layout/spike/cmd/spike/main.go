@@ -9,6 +9,8 @@
 //	emit      one JSONL row per class-agnostically assembled line: the feature
 //	          vector plus what the pipeline currently calls that line
 //	explain   print the model's decision path for a document's first lines
+//	regions   one JSONL row per candidate region: the line model's proposed
+//	          class plus the region-scoped feature vector
 //	features  print the feature contract, for the Python trainer to assert on
 package main
 
@@ -41,13 +43,15 @@ var featureNames = docpdf.LayoutFeatureContract()
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: spike <emit|explain|features> [args]")
+		fmt.Fprintln(os.Stderr, "usage: spike <emit|regions|explain|features> [args]")
 		os.Exit(2)
 	}
 	var err error
 	switch os.Args[1] {
 	case "emit":
 		err = runEmit(os.Args[2:])
+	case "regions":
+		err = runRegions(os.Args[2:])
 	case "explain":
 		err = runExplain(os.Args[2:])
 	case "features":
@@ -75,6 +79,7 @@ func runEmit(args []string) error {
 	listPath := flags.String("list", "", "file containing one PDF path per line")
 	learnedFormula := flags.Bool("learned-formula", false, "apply the migrated Formula routing when reporting the current class")
 	learnedAll := flags.Bool("learned-all", false, "hand every line-class decision to the model")
+	learnedRegions := flags.Bool("learned-regions", false, "gate structural regions with the region model")
 	jobs := flags.Int("jobs", runtime.NumCPU(), "parallel workers")
 	quiet := flags.Bool("quiet", false, "suppress per-document progress")
 	if err := flags.Parse(args); err != nil {
@@ -108,7 +113,7 @@ func runEmit(args []string) error {
 		go func() {
 			defer wg.Done()
 			for path := range work {
-				rows, err := emitDocument(context.Background(), path, *learnedFormula, *learnedAll)
+				rows, err := emitDocument(context.Background(), path, *learnedFormula, *learnedAll, *learnedRegions)
 				if err != nil {
 					// One malformed PDF in a 80k-document corpus must not
 					// abandon the other 79,999; count it and carry on.
@@ -155,7 +160,7 @@ func runEmit(args []string) error {
 //
 // That last part is Task 1's baseline: the heuristics and the model have to be
 // scored on the SAME lines or the comparison means nothing.
-func emitDocument(ctx context.Context, path string, learnedFormula, learnedAll bool) ([]lineRow, error) {
+func emitDocument(ctx context.Context, path string, learnedFormula, learnedAll, learnedRegions bool) ([]lineRow, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -179,6 +184,7 @@ func emitDocument(ctx context.Context, path string, learnedFormula, learnedAll b
 		DetectHeadings:        true,
 		LearnedFormulaRouting: learnedFormula,
 		LearnedRouting:        learnedAll,
+		LearnedRegions:        learnedRegions,
 		ClassifyThenRoute:     learnedAll || learnedFormula,
 	})
 }

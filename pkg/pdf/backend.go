@@ -101,6 +101,10 @@ type ExtractionOptions struct {
 	// model: it changes table STRUCTURE, which is what TEDS scores, rather than
 	// which regions are tables. OFF by default.
 	LearnedColumns bool
+	// LearnedRegions gates the structural classes with the REGION model: a run
+	// of same-label lines only stands if the second stage accepts it. Requires
+	// LearnedRouting; OFF by default.
+	LearnedRegions bool
 }
 
 const defaultMaxParallelPages = 12
