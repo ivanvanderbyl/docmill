@@ -1,6 +1,8 @@
 package pdf
 
 import (
+	"strings"
+
 	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
 	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
 )
@@ -116,6 +118,35 @@ func (l *lineLabeller) isClass(box geom.Box, class string) bool {
 	return ok && label == class
 }
 
+// labelOfFirstLine returns the label of the TOPMOST class-agnostic line inside
+// box, rather than the plurality.
+//
+// This exists for list items, where the plurality vote is actively wrong. A
+// four-line list item carries its marker on the first line only; the other
+// three read as ordinary prose and the model labels them Text. The vote is then
+// 3-1 against and the item renders as a paragraph — which is what was
+// happening, and it accounted for 88% of the list items the routing missed.
+//
+// "Is this block a list item?" is really "does this block START a list item?",
+// so the first line is the right thing to ask.
+func (l *lineLabeller) labelOfFirstLine(box geom.Box) (string, bool) {
+	if !l.ok {
+		return "", false
+	}
+	best, label := 0.0, ""
+	found := false
+	for i, line := range l.lines {
+		if lineContainment(line.BBox, box) < 0.5 {
+			continue
+		}
+		top := topEdgeOf(line.BBox)
+		if !found || top < best {
+			best, label, found = top, l.labels[i], true
+		}
+	}
+	return label, found
+}
+
 // dropPictureBlocks removes blocks the model calls Picture — figure innards
 // such as axis ticks, node labels and legend text, which are text on the page
 // but not part of the prose flow.
@@ -150,11 +181,24 @@ func applyLearnedListItems(blocks []markdownBlock, labeller *lineLabeller) []mar
 	}
 	out := append([]markdownBlock(nil), blocks...)
 	for i := range out {
-		if out[i].tableData != nil || !labeller.isClass(out[i].Box, layoutClassListItem) {
+		if out[i].tableData != nil {
+			continue
+		}
+		label, ok := labeller.labelOfFirstLine(out[i].Box)
+		if !ok || label != layoutClassListItem {
 			continue
 		}
 		if rewritten, ok := rewriteListItem(out[i].Text); ok {
 			out[i].Text = rewritten
+			continue
+		}
+		// The model recognised a list item whose marker is not a character we
+		// can strip — it may be a glyph the font maps oddly, or drawn rather
+		// than typed. Render it as a list item anyway: the classification is the
+		// evidence, and refusing because no literal bullet is present is the
+		// renderer overruling the classifier.
+		if text := strings.TrimSpace(out[i].Text); text != "" {
+			out[i].Text = "- " + text
 		}
 	}
 	return out
