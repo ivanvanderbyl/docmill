@@ -350,6 +350,14 @@ func (p *Page) RulingSegments(ctx context.Context) ([]docpage.RulingSegment, err
 		for _, obj := range objects {
 			switch v := obj.(type) {
 			case *pdfpage.PathObject:
+				// Stroked paths only. The interpreter now also emits FILLED
+				// paths, which it previously dropped, and a filled shape's
+				// outline is not a drawn line — letting the four edges of every
+				// solid block through here would invent a table grid around it.
+				// Ruling geometry is unchanged by that new capability.
+				if !v.IsStroked() {
+					continue
+				}
 				for _, segment := range v.Segments() {
 					segments = append(segments, docpage.RulingSegment{
 						FromX:  float64(segment.From.X),
@@ -367,6 +375,102 @@ func (p *Page) RulingSegments(ctx context.Context) ([]docpage.RulingSegment, err
 	}
 	collect(pg.Objects())
 	return segments, nil
+}
+
+// DrawnObjects returns everything the page draws, in draw order, with each
+// object's VISIBLE box in top-left page coordinates.
+//
+// RulingSegments answers a narrow question — where are the ruled lines — and
+// discards every other kind of ink. This is the whole picture: images,
+// shadings, filled shapes and text, each clipped to what actually shows.
+//
+// Nested form content is emitted after the form that holds it, at Depth+1, with
+// the form's clip intersected down. The interpreter deliberately does not push
+// the enclosing clip into a form's own states (matching the C++, which copies
+// the other four sub-states and not the clip), so the intersection has to
+// happen here, on the way down.
+func (p *Page) DrawnObjects(ctx context.Context) ([]docpage.DrawnObject, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	pg, size, err := p.load()
+	if err != nil {
+		return nil, err
+	}
+
+	var out []docpage.DrawnObject
+	var collect func(objects []pdfpage.PageObject, inherited pdfpage.ClipPath, depth int)
+	collect = func(objects []pdfpage.PageObject, inherited pdfpage.ClipPath, depth int) {
+		for _, obj := range objects {
+			if !obj.IsActive() {
+				continue
+			}
+			visible, shown := obj.VisibleRect()
+			if shown {
+				if clipped, ok := inherited.Clip(visible); ok {
+					visible = clipped
+				} else {
+					shown = false
+				}
+			}
+
+			if shown {
+				drawn := docpage.DrawnObject{
+					Kind:  drawnKindOf(obj),
+					Box:   pdfiumRectToTopLeftBox(visible, size.Height),
+					Depth: depth,
+				}
+				if path, ok := obj.(*pdfpage.PathObject); ok {
+					drawn.Stroked = path.IsStroked()
+					drawn.Filled = path.IsFilled()
+				}
+				if image, ok := obj.(*pdfpage.ImageObject); ok {
+					drawn.Inline = image.IsInline()
+				}
+				out = append(out, drawn)
+			}
+
+			if form, ok := obj.(*pdfpage.FormObject); ok {
+				// Descend even when the form itself was clipped away, so the
+				// child clip decides per object rather than the form's union
+				// box discarding content that does show.
+				child := inherited
+				if box, bounded := obj.ClipPath().Box(); bounded {
+					child.IntersectRect(box)
+				}
+				collect(form.Objects(), child, depth+1)
+			}
+		}
+	}
+	collect(pg.Objects(), pdfpage.ClipPath{}, 0)
+	return out, nil
+}
+
+func drawnKindOf(obj pdfpage.PageObject) docpage.DrawnKind {
+	switch obj.Kind() {
+	case pdfpage.KindText:
+		return docpage.DrawnText
+	case pdfpage.KindPath:
+		return docpage.DrawnPath
+	case pdfpage.KindImage:
+		return docpage.DrawnImage
+	case pdfpage.KindShading:
+		return docpage.DrawnShading
+	default:
+		return docpage.DrawnForm
+	}
+}
+
+// pdfiumRectToTopLeftBox converts a bottom-left user-space rect to docmill's
+// top-left box, which is the same flip RulingSegments applies to its endpoints.
+func pdfiumRectToTopLeftBox(rect crt.FloatRect, pageHeight float64) geom.Box {
+	return geom.Box{
+		L:      float64(rect.Left),
+		R:      float64(rect.Right),
+		T:      pageHeight - float64(rect.Top),
+		B:      pageHeight - float64(rect.Bottom),
+		Origin: geom.TopLeft,
+	}
 }
 
 func parserError(e parser.Error) error {

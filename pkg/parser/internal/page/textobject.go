@@ -73,6 +73,9 @@ func newTextObject(contentStream int32) *TextObject {
 
 func (t *TextObject) getType() objectType { return typeText }
 
+// Kind reports that this is a text-showing object.
+func (t *TextObject) Kind() ObjectKind { return KindText }
+
 // Font returns the active font for this run.
 func (t *TextObject) Font() *font.Font { return t.graphicStates.textState.GetFont() }
 

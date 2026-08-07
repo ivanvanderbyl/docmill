@@ -60,6 +60,10 @@ type StreamContentParser struct {
 	recursionState  *FormRecursionState
 	mtContentToUser crt.Matrix
 
+	// bbox is the C++ bbox_ ctor argument. Only Handle_ShadeFill reads it: an
+	// `sh` with no clip in force paints across the whole of it.
+	bbox crt.FloatRect
+
 	paramStartPos uint32
 	paramCount    uint32
 	paramBuf      [kParamBufSize]contentParam
@@ -92,6 +96,7 @@ func newStreamContentParser(
 	contentToUser *crt.Matrix,
 	objectHolder *PageObjectHolder,
 	pResources *objects.Dictionary,
+	bbox crt.FloatRect,
 	states *AllStates,
 	recursionState *FormRecursionState,
 ) *StreamContentParser {
@@ -102,6 +107,7 @@ func newStreamContentParser(
 		objectHolder:    objectHolder,
 		recursionState:  recursionState,
 		mtContentToUser: crt.IdentityMatrix(),
+		bbox:            bbox,
 		allCTMs:         map[int32]crt.Matrix{},
 	}
 	if contentToUser != nil {
@@ -396,14 +402,19 @@ func (p *StreamContentParser) onOperator(op []byte) {
 		p.handleExecuteXObject()
 	case "BI":
 		p.handleBeginImage()
+	// Shading fill.
+	case "sh":
+		p.handleShadeFill()
 	// Path subpath start: must greedily consume the path run so the tokenizer
 	// stays in sync (other path ops just clear params).
 	case "m":
 		p.handleMoveTo()
-	// All other path/color/shading/state/Type3-metric operators (l c v y h re
-	// n f f* F S s B B* b b* W W* J j M d ri i g G rg RG k K cs CS sc SC scn
-	// SCN sh d0 d1) are accepted no-ops: their params are consumed by
-	// clearAllParams.
+	case "re":
+		p.handleRectangle()
+	// All other path/color/state/Type3-metric operators (l c v y h re n f f* F
+	// S s B B* b b* W W* J j M d ri i g G rg RG k K cs CS sc SC scn SCN d0 d1)
+	// are accepted no-ops here: the path ones are consumed inside the path run
+	// started by `m`, and the rest have their params cleared by clearAllParams.
 	default:
 	}
 }
@@ -602,6 +613,7 @@ func (p *StreamContentParser) addTextObject(strings [][]byte, kernings []float32
 	p.curStates.IncrementTextPositionY(position.Y)
 
 	// Clip-mode text capture is deferred (Clone unused on read path).
+	pText.SetClipPath(p.curStates.ClipPath())
 	p.objectHolder.AppendPageObject(pText)
 
 	if len(kernings) > 0 && kernings[len(kernings)-1] != 0 {
@@ -760,6 +772,11 @@ func (p *StreamContentParser) handleBeginImage() {
 			break
 		}
 	}
+	// An inline image occupies the unit square under the CTM just like an
+	// image XObject, so the object can be emitted without decoding the sample
+	// data this loop just skipped. The name is empty: an inline image has no
+	// resource entry to name it.
+	p.addImage("", true)
 }
 
 // --- path: m + ParsePathObject ---
@@ -787,36 +804,88 @@ func (p *StreamContentParser) handleMoveTo() {
 	if p.paramCount != 2 {
 		return
 	}
-	p.parsePathObject()
+	p.parsePathObject(false)
+}
+
+// handleRectangle ports Handle_Rectangle. A rectangle can open a path on its
+// own — `x y w h re W n` is the commonest clip in real PDFs and contains no
+// `m` at all — so it has to be an entry point into the run, not only an
+// operator handled inside one. While the interpreter only tracked strokes this
+// did not matter, because such a path is never stroked; it matters now that
+// clips and fills are tracked.
+func (p *StreamContentParser) handleRectangle() {
+	if p.paramCount != 4 {
+		return
+	}
+	p.parsePathObject(true)
 }
 
 // parsePathObject ports ParsePathObject (cpdf_streamcontentparser.cpp:1685): a
 // greedy sub-loop consuming a run of path operators (m l c v y h re) and their
 // numeric params, stopping (rewinding to last_pos) at the first non-path
-// operator. The native Markdown pipeline only needs ruling geometry, so this
-// materialises straight line segments from m/l/h/re and tracks curve endpoints.
-func (p *StreamContentParser) parsePathObject() {
+// operator.
+//
+// startedByRect says whether the run was opened by `re` rather than `m`, which
+// changes only how the first subpath is seeded.
+//
+// Curves contribute their chord rather than their control polygon, and the
+// reason is recorded at the `c` branch below.
+func (p *StreamContentParser) parsePathObject(startedByRect bool) {
 	lastPos := p.syntax.GetPos()
 	matrix := p.curStates.CTM().Multiply(p.mtContentToUser)
 	transform := func(point crt.PointF) crt.PointF {
 		return matrix.Transform(point)
 	}
-	current := transform(p.getPoint(0))
-	subpathStart := current
 	var segments []PathSegment
+	// clipPoints keeps every point the run has touched, because appendObject
+	// clears segments and the clip is applied afterwards — the C++ order, where
+	// AddPathObject emits the object and only then merges the clip, so an
+	// object is never clipped by its own clip path.
+	var clipPoints []crt.PointF
+	clipPending := false
+
+	var current, subpathStart crt.PointF
+	if startedByRect {
+		x, y, width, height := p.getNumber(3), p.getNumber(2), p.getNumber(1), p.getNumber(0)
+		p1 := transform(crt.PointF{X: x, Y: y})
+		p2 := transform(crt.PointF{X: x + width, Y: y})
+		p3 := transform(crt.PointF{X: x + width, Y: y + height})
+		p4 := transform(crt.PointF{X: x, Y: y + height})
+		segments = append(segments,
+			PathSegment{From: p1, To: p2},
+			PathSegment{From: p2, To: p3},
+			PathSegment{From: p3, To: p4},
+			PathSegment{From: p4, To: p1},
+		)
+		clipPoints = append(clipPoints, p1, p2, p3, p4)
+		current = p1
+		subpathStart = p1
+	} else {
+		current = transform(p.getPoint(0))
+		subpathStart = current
+		clipPoints = append(clipPoints, current)
+	}
+
 	var numbers pathNumberBuffer
-	appendObject := func() {
+	appendObject := func(stroked, filled bool) {
 		if len(segments) == 0 {
 			return
 		}
-		obj := newPathObject(p.getCurrentStreamIndex(), segments, p.curStates.graphicStates.graphState.GetLineWidth())
+		obj := newPathObject(p.getCurrentStreamIndex(), segments, p.curStates.graphicStates.graphState.GetLineWidth(), stroked, filled)
 		obj.graphicStates = p.curStates.graphicStates
 		obj.contentMarks = append([]ContentMark(nil), p.topContentMarks()...)
+		obj.SetClipPath(p.curStates.ClipPath())
 		p.objectHolder.AppendPageObject(obj)
 		segments = nil
 	}
 	pointFromNumbers := func(values []float32) crt.PointF {
 		return transform(crt.PointF{X: values[len(values)-2], Y: values[len(values)-1]})
+	}
+	// addSegment is the single place a segment joins the path, so the clip
+	// bbox cannot drift out of step with the geometry it is meant to describe.
+	addSegment := func(from, to crt.PointF) {
+		segments = append(segments, PathSegment{From: from, To: to})
+		clipPoints = append(clipPoints, from, to)
 	}
 	for {
 		typ := p.syntax.ParseNextElement()
@@ -834,12 +903,13 @@ func (p *StreamContentParser) parsePathObject() {
 					if len(values) >= 2 {
 						current = pointFromNumbers(values)
 						subpathStart = current
+						clipPoints = append(clipPoints, current)
 					}
 					numbers.reset()
 				case 'l':
 					if len(values) >= 2 {
 						next := pointFromNumbers(values)
-						segments = append(segments, PathSegment{From: current, To: next})
+						addSegment(current, next)
 						current = next
 					}
 					numbers.reset()
@@ -854,29 +924,35 @@ func (p *StreamContentParser) parsePathObject() {
 					// table rule (which requires an axis-aligned segment).
 					if len(values) >= 6 {
 						next := pointFromNumbers(values)
-						segments = append(segments, PathSegment{From: current, To: next})
+						addSegment(current, next)
 						current = next
 					}
 					numbers.reset()
 				case 'v':
 					if len(values) >= 4 {
 						next := pointFromNumbers(values)
-						segments = append(segments, PathSegment{From: current, To: next})
+						addSegment(current, next)
 						current = next
 					}
 					numbers.reset()
 				case 'y':
 					if len(values) >= 4 {
 						next := pointFromNumbers(values)
-						segments = append(segments, PathSegment{From: current, To: next})
+						addSegment(current, next)
 						current = next
 					}
 					numbers.reset()
 				case 'h':
-					segments = append(segments, PathSegment{From: current, To: subpathStart})
+					addSegment(current, subpathStart)
 					current = subpathStart
 					numbers.reset()
 				case 'W':
+					// W does not clip here. It ARMS the clip, which is then
+					// merged when the paint operator arrives — so `W n` clips
+					// and a stray `W` with no paint operator does not. This is
+					// path_clip_type_ in the C++, set by Handle_SetClipPath and
+					// consumed by AddPathObject.
+					clipPending = true
 					numbers.reset()
 				default:
 					bProcessed = false
@@ -889,17 +965,19 @@ func (p *StreamContentParser) parsePathObject() {
 						p2 := transform(crt.PointF{X: x + width, Y: y})
 						p3 := transform(crt.PointF{X: x + width, Y: y + height})
 						p4 := transform(crt.PointF{X: x, Y: y + height})
-						segments = append(segments,
-							PathSegment{From: p1, To: p2},
-							PathSegment{From: p2, To: p3},
-							PathSegment{From: p3, To: p4},
-							PathSegment{From: p4, To: p1},
-						)
+						addSegment(p1, p2)
+						addSegment(p2, p3)
+						addSegment(p3, p4)
+						addSegment(p4, p1)
 						current = p1
 						subpathStart = p1
 					}
 					numbers.reset()
 				} else if word[0] == 'W' && word[1] == '*' {
+					// Even-odd clip. The fill rule changes which interior
+					// points are inside, never how far the path reaches, so a
+					// bounding-box clip treats W* exactly as W.
+					clipPending = true
 					numbers.reset()
 				} else {
 					bProcessed = false
@@ -922,16 +1000,39 @@ func (p *StreamContentParser) parsePathObject() {
 			bProcessed = false
 		}
 		if !bProcessed {
-			if pathPaintsStroke(paintOp) {
+			stroked := pathPaintsStroke(paintOp)
+			if stroked || pathPaintsFill(paintOp) {
 				if pathPaintOperatorCloses(paintOp) && current != subpathStart {
-					segments = append(segments, PathSegment{From: current, To: subpathStart})
+					addSegment(current, subpathStart)
 				}
-				appendObject()
+				appendObject(stroked, pathPaintsFill(paintOp))
+			}
+			// The clip merges AFTER the object is emitted, so the painted path
+			// is not clipped by the clip it establishes. AddPathObject does the
+			// same, and the ordering is observable: `re W n` used as a viewport
+			// would otherwise clip away the very rectangle defining it.
+			if clipPending {
+				p.applyPathClip(clipPoints)
 			}
 			p.syntax.SetPos(lastPos)
 			return
 		}
 	}
+}
+
+// applyPathClip narrows the interpreter's clip to the bounding box of the path
+// just parsed.
+//
+// A path of fewer than two points cannot bound anything, and the C++ treats
+// that case as a clip to an empty rect rather than as no clip at all — a
+// degenerate clip hides everything after it, which is very different from
+// leaving the previous clip in force.
+func (p *StreamContentParser) applyPathClip(points []crt.PointF) {
+	if len(points) < 2 {
+		p.curStates.MutableClipPath().IntersectRect(crt.FloatRect{})
+		return
+	}
+	p.curStates.MutableClipPath().IntersectRect(crt.GetBBox(points))
 }
 
 func pathPaintsStroke(op []byte) bool {
@@ -943,9 +1044,24 @@ func pathPaintsStroke(op []byte) bool {
 	}
 }
 
+// pathPaintOperatorCloses reports whether the operator closes the open subpath
+// before painting it.
 func pathPaintOperatorCloses(op []byte) bool {
 	switch string(op) {
 	case "s", "b", "b*":
+		return true
+	default:
+		return false
+	}
+}
+
+// pathPaintsFill reports whether the operator fills. AddPathObject emits an
+// object when the path is stroked OR filled; only `n` (and a bare clip) paints
+// nothing. Filled paths were previously dropped, which lost every rule drawn as
+// a thin filled rectangle and every solid shape in a chart.
+func pathPaintsFill(op []byte) bool {
+	switch string(op) {
+	case "f", "F", "f*", "B", "B*", "b", "b*":
 		return true
 	default:
 		return false
@@ -965,7 +1081,51 @@ func (p *StreamContentParser) handleExecuteXObject() {
 		p.addForm(xobj, name)
 		return
 	}
-	// Image (and other) subtypes are out of scope for text extraction.
+	if subtype == "Image" {
+		p.addImage(name, false)
+	}
+	// Any other subtype (/PS, and unknown ones) draws nothing.
+}
+
+// addImage ports AddImageObject: the placed image's matrix is the CTM composed
+// with the content-to-user matrix, exactly as for a form. No image data is
+// read — the geometry is entirely in the matrix, because a PDF image always
+// occupies the unit square that matrix maps.
+func (p *StreamContentParser) addImage(name string, inline bool) {
+	matrix := p.curStates.CTM().Multiply(p.mtContentToUser)
+	obj := newImageObject(p.getCurrentStreamIndex(), matrix, inline)
+	obj.SetResourceName(name)
+	obj.graphicStates = p.curStates.graphicStates
+	obj.contentMarks = append([]ContentMark(nil), p.topContentMarks()...)
+	obj.SetClipPath(p.curStates.ClipPath())
+	p.objectHolder.AppendPageObject(obj)
+}
+
+// handleShadeFill ports Handle_ShadeFill. A shading has no geometry of its
+// own: it floods the current clip, or the whole page box when nothing is
+// clipping it.
+//
+// PDFium additionally intersects a MESH shading with the bbox computed from its
+// coordinate data. That is not done here, because the shading stream is never
+// loaded, so a mesh shading reports the clip region — an over-estimate, in the
+// same safe direction as the rest of the clip handling.
+func (p *StreamContentParser) handleShadeFill() {
+	if p.findResourceObj("Shading", p.getString(0)) == nil {
+		return
+	}
+	clip := p.curStates.ClipPath()
+	area, bounded := clip.Box()
+	if !bounded {
+		area = p.bbox
+	}
+	if area.IsEmpty() {
+		return
+	}
+	obj := newShadingObject(p.getCurrentStreamIndex(), area)
+	obj.graphicStates = p.curStates.graphicStates
+	obj.contentMarks = append([]ContentMark(nil), p.topContentMarks()...)
+	obj.SetClipPath(clip)
+	p.objectHolder.AppendPageObject(obj)
 }
 
 // addForm ports AddForm (cpdf_streamcontentparser.cpp:810): snapshot the
@@ -977,6 +1137,12 @@ func (p *StreamContentParser) addForm(stream *objects.Stream, name string) {
 	}
 	status := newAllStates()
 	status.graphicStates = p.curStates.graphicStates
+	// The C++ copies the general, graph, color and text states one by one and
+	// pointedly does NOT copy the clip, so form content starts clipped only by
+	// its own /BBox. The enclosing clip is not lost: it rides on the
+	// FormObject, and a walker intersects it down into the children. Copying it
+	// here as well would apply it twice.
+	status.graphicStates.clipPath = ClipPath{}
 
 	form := p.parseForm(stream, name, status)
 	if form == nil {
@@ -989,6 +1155,7 @@ func (p *StreamContentParser) addForm(stream *objects.Stream, name string) {
 	formObj.calcBoundingBox()
 	formObj.graphicStates = p.curStates.graphicStates
 	formObj.contentMarks = append([]ContentMark(nil), p.topContentMarks()...)
+	formObj.SetClipPath(p.curStates.ClipPath())
 	p.objectHolder.AppendPageObject(formObj)
 }
 

@@ -102,6 +102,14 @@ func (s *AllStates) MutableTextState() *TextState { return &s.graphicStates.text
 // MutableGraphState returns the writable graph (stroking) state.
 func (s *AllStates) MutableGraphState() *GraphState { return &s.graphicStates.graphState }
 
+// ClipPath returns the clip currently in force.
+func (s *AllStates) ClipPath() ClipPath { return s.graphicStates.clipPath }
+
+// MutableClipPath returns the writable clip. Living inside GraphicStates is
+// what makes q/Q save and restore it, since that whole struct is value-copied
+// onto the state stack.
+func (s *AllStates) MutableClipPath() *ClipPath { return &s.graphicStates.clipPath }
+
 // --- matrix accessors ---
 
 // TextMatrix returns Tm.

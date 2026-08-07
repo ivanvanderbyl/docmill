@@ -12,7 +12,7 @@ import (
 // suitable for exercising the param ring and the text-position math directly.
 func newTestParser() *StreamContentParser {
 	holder := &PageObjectHolder{}
-	return newStreamContentParser(nil, nil, nil, holder, nil, nil, newFormRecursionState())
+	return newStreamContentParser(nil, nil, nil, holder, nil, crt.FloatRect{}, nil, newFormRecursionState())
 }
 
 // --- Derived vector B: GetMatrix/GetNumbers ordering ---

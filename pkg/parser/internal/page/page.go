@@ -105,6 +105,10 @@ func (p *Page) updateDimensions() {
 	}
 	p.pageWidth = bbox.Width()
 	p.pageHeight = bbox.Height()
+	// CPDF_Page::GetBBox, which the content parser passes through as rcBBox.
+	// It stays in unrotated user space: page_matrix_ is applied downstream, and
+	// the interpreter it feeds works in user space too.
+	p.bbox = bbox
 
 	switch p.getPageRotation() {
 	case 0:
