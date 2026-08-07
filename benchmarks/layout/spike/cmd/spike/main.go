@@ -1,16 +1,15 @@
-// Command spike is the throwaway harness for Task 0 of the learned layout
-// classifier plan (docs/plans/2026-08-06-learned-layout-classifier.md): prove
-// end to end that a gradient-boosted tree over docmill's own geometry can find
-// display equations that the hand-tuned heuristics miss.
+// Command spike is the training and measurement harness for the learned layout
+// classifier (docs/plans/2026-08-06-learned-layout-classifier.md).
 //
-// It is deliberately NOT part of the shipping pipeline. If the spike succeeds,
-// Task 2 rebuilds the feature extractor properly inside pkg/pdf; if it fails,
-// this directory is deleted along with the rest of the plan.
+// It is NOT part of the shipping pipeline: the feature vector, the model and
+// the routing all live in pkg/pdf. This drives them over a corpus.
 //
 // Subcommands:
 //
-//	emit     dump one JSONL row per class-agnostically assembled line
-//	predict  run the embedded LightGBM model over a PDF and report formula lines
+//	emit      one JSONL row per class-agnostically assembled line: the feature
+//	          vector plus what the pipeline currently calls that line
+//	explain   print the model's decision path for a document's first lines
+//	features  print the feature contract, for the Python trainer to assert on
 package main
 
 import (
@@ -42,19 +41,13 @@ var featureNames = docpdf.LayoutFeatureContract()
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: spike <emit|predict|verify|gen|explain|features> [args]")
+		fmt.Fprintln(os.Stderr, "usage: spike <emit|explain|features> [args]")
 		os.Exit(2)
 	}
 	var err error
 	switch os.Args[1] {
 	case "emit":
 		err = runEmit(os.Args[2:])
-	case "predict":
-		err = runPredict(os.Args[2:])
-	case "verify":
-		err = runVerify(os.Args[2:])
-	case "gen":
-		err = runGen(os.Args[2:])
 	case "explain":
 		err = runExplain(os.Args[2:])
 	case "features":

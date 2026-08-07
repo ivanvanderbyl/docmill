@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -206,4 +207,104 @@ func LayoutModelClasses() []string {
 		return nil
 	}
 	return append([]string(nil), model.classes...)
+}
+
+// ExplainLineClass returns a human-readable decision path for one feature
+// vector: the label, and the splits that produced it.
+//
+// AGENTS.md requires detection to be "deterministic, repeatable, and
+// explainable". A learned classifier satisfies the first two by construction;
+// this is what satisfies the third. The plan anticipated having to record an
+// explainability GAP here, because leaves — the library originally chosen —
+// exposes only scores. Walking our own trees means the gap closes instead.
+//
+// The full path across 3,600 trees is unreadable, so this reports the trees
+// that moved the winning class most, plus which features the vector was tested
+// against most often.
+func ExplainLineClass(features []float64, topTrees int) (string, error) {
+	model, err := layoutModel()
+	if err != nil {
+		return "", err
+	}
+	if len(features) != model.numFeatures {
+		return "", fmt.Errorf("expected %d features, got %d", model.numFeatures, len(features))
+	}
+
+	label, probability := model.PredictLineClass(features)
+	winner := 0
+	for i, name := range model.classes {
+		if name == label {
+			winner = i
+		}
+	}
+
+	type contribution struct {
+		tree int
+		leaf float64
+		path []string
+	}
+	var contributions []contribution
+	uses := map[int]int{}
+
+	for tree, root := range model.treeRoot {
+		node := root
+		var path []string
+		for {
+			feature := int(model.nodeFeature[node])
+			value := features[feature]
+			uses[feature]++
+			if math.IsNaN(value) {
+				value = 0
+			}
+			goLeft := value <= model.threshold[node]
+			comparison := ">"
+			if goLeft {
+				comparison = "<="
+			}
+			path = append(path, fmt.Sprintf("%s=%.4g %s %.4g", LayoutFeatureNames[feature], value, comparison, model.threshold[node]))
+			next := model.right[node]
+			if goLeft {
+				next = model.left[node]
+			}
+			if next < 0 {
+				// Only trees voting for the winning class explain the verdict.
+				if tree%model.numClass == winner {
+					contributions = append(contributions, contribution{tree, model.leafValue[-next-1], path})
+				}
+				break
+			}
+			node = next
+		}
+	}
+	sort.SliceStable(contributions, func(i, j int) bool {
+		return math.Abs(contributions[i].leaf) > math.Abs(contributions[j].leaf)
+	})
+
+	var out strings.Builder
+	fmt.Fprintf(&out, "%s (p=%.4f) from %d trees over %d classes\n", label, probability, len(model.treeRoot), model.numClass)
+	fmt.Fprintf(&out, "strongest evidence for %s:\n", label)
+	for i, c := range contributions {
+		if i >= topTrees {
+			break
+		}
+		fmt.Fprintf(&out, "  tree %4d  leaf %+.5f  %s\n", c.tree, c.leaf, strings.Join(c.path, "  |  "))
+	}
+	ranked := make([]int, 0, len(uses))
+	for feature := range uses {
+		ranked = append(ranked, feature)
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if uses[ranked[i]] != uses[ranked[j]] {
+			return uses[ranked[i]] > uses[ranked[j]]
+		}
+		return ranked[i] < ranked[j]
+	})
+	out.WriteString("most-tested features on this line:\n")
+	for i, feature := range ranked {
+		if i >= 5 {
+			break
+		}
+		fmt.Fprintf(&out, "  %-22s tested %d times, value %.4g\n", LayoutFeatureNames[feature], uses[feature], features[feature])
+	}
+	return out.String(), nil
 }

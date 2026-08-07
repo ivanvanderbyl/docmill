@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strconv"
+
+	docpdf "github.com/ivanvanderbyl/docmill/v2/pkg/pdf"
 )
 
-// runExplain prints the decision path behind the highest-scoring lines of a
-// document — the introspection leaves cannot provide.
+// runExplain prints the decision path behind a document's most interesting
+// lines — the introspection AGENTS.md asks for, against the model that ships.
 //
 //	spike explain <input.pdf> [count]
 func runExplain(args []string) error {
@@ -28,15 +29,15 @@ func runExplain(args []string) error {
 	if err != nil {
 		return err
 	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		return genPredict(rows[i].Features) > genPredict(rows[j].Features)
-	})
 	if count > len(rows) {
 		count = len(rows)
 	}
 	for _, row := range rows[:count] {
-		fmt.Printf("\n=== page %d line %d: %q\n", row.Page, row.Line, row.Text)
-		fmt.Print(genExplain(row.Features, featureNames, 5))
+		explanation, err := docpdf.ExplainLineClass(row.Features, 4)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("\n=== page %d line %d: %q\n%s", row.Page, row.Line, row.Text, explanation)
 	}
 	return nil
 }
