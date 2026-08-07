@@ -9,6 +9,9 @@
 //	emit      one JSONL row per class-agnostically assembled line: the feature
 //	          vector plus what the pipeline currently calls that line
 //	explain   print the model's decision path for a document's first lines
+//	drawn     one JSONL row per page: every object the content-stream
+//	          interpreter draws, with its visible box — text, paths, images,
+//	          shadings and form XObjects
 //	regions   one JSONL row per candidate region: the line model's proposed
 //	          class plus the region-scoped feature vector
 //	features  print the feature contract, for the Python trainer to assert on
@@ -43,7 +46,7 @@ var featureNames = docpdf.LayoutFeatureContract()
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: spike <emit|regions|explain|features> [args]")
+		fmt.Fprintln(os.Stderr, "usage: spike <emit|drawn|regions|explain|features> [args]")
 		os.Exit(2)
 	}
 	var err error
@@ -52,6 +55,8 @@ func main() {
 		err = runEmit(os.Args[2:])
 	case "regions":
 		err = runRegions(os.Args[2:])
+	case "drawn":
+		err = runDrawn(os.Args[2:])
 	case "explain":
 		err = runExplain(os.Args[2:])
 	case "features":
