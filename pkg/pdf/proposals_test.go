@@ -329,3 +329,74 @@ func TestColumnSplitKeepsSingleColumnProseIntact(t *testing.T) {
 		t.Fatalf("got %d lines, want 5 unchanged", len(got))
 	}
 }
+
+func TestGutterIndexFindsAPersistentGutter(t *testing.T) {
+	// Two columns of PROSE across six rows: ragged word boundaries inside each
+	// column, and one persistent clear corridor between x=280 and x=340. The
+	// first version of this fixture placed words at identical x every row —
+	// which is a table grid, and the index correctly reported its five aligned
+	// corridors as gutters. Prose has to stagger.
+	var cells []page.TextCell
+	for row := range 6 {
+		top := 100 + float64(row)*14
+		for _, columnLeft := range []float64{60, 340} {
+			x := columnLeft
+			for word := 0; x < columnLeft+180; word++ {
+				width := 30 + float64((row*11+word*17)%30)
+				cells = append(cells, page.TextCell{
+					Text: "w",
+					Box:  geom.Box{L: x, T: top, R: x + width, B: top + 10, Origin: geom.TopLeft},
+				})
+				x += width + 4
+			}
+		}
+	}
+	index := newGutterIndex(cells)
+	count, best, _ := index.gutterFeatures(geom.Box{L: 60, T: 100, R: 560, B: 180, Origin: geom.TopLeft})
+	if count != 1 {
+		t.Fatalf("gutter count = %v, want exactly 1", count)
+	}
+	// 0.9, not 0.99: the 2pt raster puts cells that straddle the corridor's
+	// edge partially inside it, so even a fully clear corridor reads slightly
+	// under 1. What matters is a clear corridor scoring HIGH and prose word
+	// gaps scoring zero, and the prose test pins the other end.
+	if best < 0.9 {
+		t.Errorf("best persistence = %v, want >= 0.9 for a clear corridor", best)
+	}
+}
+
+func TestGutterIndexIgnoresWordSpacingInProse(t *testing.T) {
+	// Ordinary prose: word gaps everywhere, none of them persistent at the
+	// same x across rows. Counting these as gutters is how prose grows
+	// imaginary columns — the failure the persistence test exists to prevent.
+	var cells []page.TextCell
+	for row := range 6 {
+		top := 100 + float64(row)*14
+		x := 60.0
+		for word := range 9 {
+			width := 35 + float64((row*7+word*13)%25) // ragged word widths
+			cells = append(cells, page.TextCell{
+				Text: "w",
+				Box:  geom.Box{L: x, T: top, R: x + width, B: top + 10, Origin: geom.TopLeft},
+			})
+			x += width + 4 // word spacing well under gutterMinWidth
+		}
+	}
+	index := newGutterIndex(cells)
+	count, _, _ := index.gutterFeatures(geom.Box{L: 60, T: 100, R: 560, B: 180, Origin: geom.TopLeft})
+	if count != 0 {
+		t.Fatalf("gutter count = %v in plain prose, want 0", count)
+	}
+}
+
+func TestGutterIndexNeedsMultipleRows(t *testing.T) {
+	// One row has nothing to persist across. Its word gaps must not register.
+	cells := []page.TextCell{
+		{Text: "a", Box: geom.Box{L: 60, T: 100, R: 200, B: 110, Origin: geom.TopLeft}},
+		{Text: "b", Box: geom.Box{L: 400, T: 100, R: 540, B: 110, Origin: geom.TopLeft}},
+	}
+	index := newGutterIndex(cells)
+	if count, _, _ := index.gutterFeatures(geom.Box{L: 60, T: 95, R: 540, B: 115, Origin: geom.TopLeft}); count != 0 {
+		t.Fatalf("gutter count = %v for a single row, want 0", count)
+	}
+}

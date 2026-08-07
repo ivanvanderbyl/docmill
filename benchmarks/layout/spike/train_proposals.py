@@ -42,6 +42,12 @@ CLASSES = [
 ]
 CLASS_INDEX = {name: i for i, name in enumerate(CLASSES)}
 
+# lambda_l2=10 is a correction, not a tuning flourish. With LightGBM's default
+# of zero, the unweighted rare classes saturate: leaf values explode until raw
+# class scores reach +/-1.6 MILLION, softmax outputs collapse to exact 0s and
+# 1s, and the ranking granularity non-max suppression depends on is gone — a
+# thousand candidates all "certain" cannot be ordered. The explosion is also
+# what finally surfaced the softmax aliasing bug as Inf/NaN.
 PARAMS = {
     "objective": "multiclass",
     "num_class": len(CLASSES),
@@ -49,6 +55,7 @@ PARAMS = {
     "num_leaves": 63,
     "max_depth": 8,
     "min_data_in_leaf": 50,
+    "lambda_l2": 10.0,
     "feature_fraction": 0.9,
     "bagging_fraction": 0.8,
     "bagging_freq": 1,
@@ -102,6 +109,7 @@ IOU_PARAMS = {
     "num_leaves": 63,
     "max_depth": 8,
     "min_data_in_leaf": 50,
+    "lambda_l2": 10.0,
     "feature_fraction": 0.9,
     "bagging_fraction": 0.8,
     "bagging_freq": 1,
@@ -136,6 +144,7 @@ def read_matrix(path, count, width):
     x = np.zeros((count, width), dtype=np.float32)
     y = np.zeros(count, dtype=np.int32)
     overlap = np.zeros(count, dtype=np.float32)
+    near = np.full(count, b"", dtype="S16")
     n = 0
     for raw in open(path):
         row = json.loads(raw)
@@ -145,10 +154,11 @@ def read_matrix(path, count, width):
         x[n] = row["f"]
         y[n] = CLASS_INDEX[row["label"]]
         overlap[n] = row["iou"]
+        near[n] = row.get("near", "").encode()
         n += 1
         if n == count:
             break
-    return x[:n], y[:n], overlap[:n]
+    return x[:n], y[:n], overlap[:n], near[:n]
 
 
 def iter_val_chunks(path, width):
@@ -198,7 +208,7 @@ def main():
           f"(all near misses, {EASY_NEGATIVE_KEEP:.0%} of easy negatives)")
 
     try:
-        x, y, overlap = read_matrix(scratch_path, count, width)
+        x, y, overlap, near = read_matrix(scratch_path, count, width)
         print(f"loaded {len(y):,} x {width} = {x.nbytes / 1e9:.2f} GB")
 
         counts = collections.Counter(y.tolist())
@@ -207,6 +217,14 @@ def main():
             print(f"{name:16s} {counts[index]:10d} {counts[index] / max(len(y), 1):7.2%}")
 
         weights = np.ones(len(y), dtype=np.float32)
+        if args.objective == "iou" and near is not None:
+            # The end-to-end diagnosis found the IoU head's errors concentrated
+            # on same-class wrong-extent TABLES: where a table was outranked,
+            # the head preferred the wrong extent 80% of the time. Tables are
+            # 3.8% of training rows, so their extent-ranking mistakes are cheap
+            # for the loss and expensive for the pipeline. Upweighting every
+            # row whose nearest region is a table makes the head pay for them.
+            weights[near == b"Table"] = 3.0
         if args.weights == "sqrt":
             background = counts[CLASS_INDEX["Background"]]
             for index in range(len(CLASSES)):
@@ -228,7 +246,7 @@ def main():
         # scored properly below in chunks that never coexist.
         model = lgb.train(params, dtrain, num_boost_round=args.rounds,
                           callbacks=[lgb.log_evaluation(0)])
-        del x, y, overlap, weights, label, dtrain
+        del x, y, overlap, near, weights, label, dtrain
     finally:
         os.unlink(scratch_path)
 

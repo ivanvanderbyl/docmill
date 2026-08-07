@@ -13,8 +13,8 @@ import (
 // offers ~375 candidates per page. Anything inside that function is multiplied
 // by 375, so this measures the per-page cost rather than the per-call cost —
 // the per-call number is the one that looks harmless.
-func benchmarkPage(lines, cells int) ProposalFeatureInput {
-	in := ProposalFeatureInput{Size: geom.Size{Width: 612, Height: 792}}
+func benchmarkPage(lines, cells int) *ProposalFeatureInput {
+	in := &ProposalFeatureInput{Size: geom.Size{Width: 612, Height: 792}}
 	for i := range lines {
 		top := 60 + float64(i)*11
 		line := ParagraphTextLine{

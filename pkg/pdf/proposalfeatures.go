@@ -6,7 +6,6 @@ import (
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
 	"github.com/ivanvanderbyl/docmill/v2/pkg/page"
-	doctable "github.com/ivanvanderbyl/docmill/v2/pkg/table"
 )
 
 // Features for the new class-agnostic region proposals.
@@ -138,10 +137,24 @@ type ProposalFeatureInput struct {
 	Cells   []page.TextCell
 	Rulings []page.RulingSegment
 	Size    geom.Size
+
+	// gutters is built lazily from Cells on first use and shared by every
+	// candidate on the page. The per-candidate gutter computation was 722us a
+	// call through doctable.ColumnGapCandidates — times ~375 candidates that
+	// was 271 of the 291 ms/page this stage cost.
+	gutters *gutterIndex
+}
+
+// gutterIndexFor returns the page's gutter index, building it once.
+func (in *ProposalFeatureInput) gutterIndexFor() *gutterIndex {
+	if in.gutters == nil {
+		in.gutters = newGutterIndex(in.Cells)
+	}
+	return in.gutters
 }
 
 // ProposalFeatures describes one candidate numerically.
-func ProposalFeatures(proposal RegionProposal, in ProposalFeatureInput) []float64 {
+func ProposalFeatures(proposal RegionProposal, in *ProposalFeatureInput) []float64 {
 	pageW := nonZeroValue(in.Size.Width)
 	pageH := nonZeroValue(in.Size.Height)
 	box := proposal.Box
@@ -156,19 +169,7 @@ func ProposalFeatures(proposal RegionProposal, in ProposalFeatureInput) []float6
 		}
 	}
 
-	gaps := doctable.ColumnGapCandidates(in.Cells, in.Rulings, box)
-	bestPersistence, meanPersistence := 0.0, 0.0
-	if len(gaps) > 0 {
-		const persistenceIndex = 4 // "persistence" in ColumnGapFeatureNames
-		for _, gap := range gaps {
-			p := gap.Features[persistenceIndex]
-			meanPersistence += p
-			if p > bestPersistence {
-				bestPersistence = p
-			}
-		}
-		meanPersistence /= float64(len(gaps))
-	}
+	gutterCount, bestPersistence, meanPersistence := in.gutterIndexFor().gutterFeatures(box)
 
 	cellCounts := make([]float64, 0, len(member))
 	heights := make([]float64, 0, len(member))
@@ -235,7 +236,7 @@ func ProposalFeatures(proposal RegionProposal, in ProposalFeatureInput) []float6
 		boolFeature(box.L <= minLineLeft(in.Lines)+2),
 		boolFeature(box.R >= maxLineRight(in.Lines)-2),
 
-		float64(len(gaps)),
+		gutterCount,
 		bestPersistence,
 		meanPersistence,
 		stability(cellCounts),

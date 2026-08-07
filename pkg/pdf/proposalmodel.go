@@ -80,7 +80,7 @@ func ProposalModelAvailable() (bool, error) {
 // opinion" rather than "no regions" — the same contract the column model uses,
 // so a missing model degrades to the previous behaviour instead of erasing the
 // page.
-func ClassifyProposals(proposals []RegionProposal, in ProposalFeatureInput) []ScoredProposal {
+func ClassifyProposals(proposals []RegionProposal, in *ProposalFeatureInput) []ScoredProposal {
 	model, err := proposalModel()
 	if err != nil || model == nil || len(proposals) == 0 {
 		return nil
@@ -147,7 +147,7 @@ func ClassifyProposals(proposals []RegionProposal, in ProposalFeatureInput) []Sc
 // steps a trained model makes possible.
 func PageRegions(lines []ParagraphTextLine, drawn []page.DrawnObject, labels []string, cells []page.TextCell, rulings []page.RulingSegment, size geom.Size) []ScoredProposal {
 	proposals := ProposeRegions(lines, GroupInkClusters(drawn, size), size)
-	scored := ClassifyProposals(proposals, ProposalFeatureInput{
+	scored := ClassifyProposals(proposals, &ProposalFeatureInput{
 		Lines:   lines,
 		Labels:  labels,
 		Cells:   cells,

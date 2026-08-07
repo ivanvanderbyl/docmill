@@ -94,6 +94,12 @@ def main():
 
             row["label"] = label
             row["iou"] = round(best_score, 4)
+            # near is the class of the best-overlapping region at ANY IoU. A
+            # near-miss is labelled Background, which erases what it nearly
+            # was — and the IoU head needs exactly that: its worst errors are
+            # on wrong-extent TABLE candidates, which are all Background rows
+            # whose near is Table.
+            row["near"] = best_class if best_score > 0 else ""
             row["split"] = page["split"]
             per_class[label] += 1
             per_split[page["split"]] += 1

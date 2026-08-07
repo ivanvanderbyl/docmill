@@ -102,7 +102,7 @@ func PageRegionProposals(ctx context.Context, doc Document, splitColumns, select
 			continue
 		}
 		if labeller.ok {
-			in := ProposalFeatureInput{
+			in := &ProposalFeatureInput{
 				Lines:   lines,
 				Labels:  labeller.labels,
 				Cells:   gapCells,
