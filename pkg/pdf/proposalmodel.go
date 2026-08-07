@@ -108,11 +108,25 @@ func ClassifyProposals(proposals []RegionProposal, in ProposalFeatureInput) []Sc
 				best = i
 			}
 		}
+		// The best NON-background class is tracked separately because argmax
+		// over all twelve is not the only sensible decision rule. Background is
+		// 76% of the training data, and a model that biased decides "nothing"
+		// for half the real paragraphs; a caller may instead want to threshold
+		// P(Background) and then choose among the real classes. Recording both
+		// lets that policy be tuned offline instead of retrained.
+		bestReal := 1 // proposalLabelOrder[0] is Background
+		for i := 1; i < len(probabilities); i++ {
+			if probabilities[i] > probabilities[bestReal] {
+				bestReal = i
+			}
+		}
 		candidate := ScoredProposal{
 			Proposal:   proposal,
 			Class:      proposalLabelOrder[best],
 			Score:      probabilities[best],
 			Background: probabilities[backgroundIndex],
+			RealClass:  proposalLabelOrder[bestReal],
+			RealScore:  probabilities[bestReal],
 		}
 		if iouErr == nil && iouModel != nil {
 			// The regressor is unbounded; IoU is not. Clamping keeps Rank a

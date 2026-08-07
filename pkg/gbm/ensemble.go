@@ -202,9 +202,16 @@ func (e *Ensemble) PredictProbabilities(features []float64) []float64 {
 			best = i
 		}
 	}
+	// The maximum is copied out BEFORE the loop overwrites the slice. Reading
+	// scores[best] inside the loop reads exp(0)=1 once i passes best, so every
+	// later class subtracts 1 instead of the max — with large raw scores that
+	// is exp(+huge)=Inf, sum=Inf, and the probabilities come back 0 and NaN.
+	// With small raw scores it is quieter and worse: finite, plausible, and
+	// wrong, silently distorting every probability after the winning class.
+	maxScore := scores[best]
 	sum := 0.0
 	for i := range scores {
-		scores[i] = math.Exp(scores[i] - scores[best])
+		scores[i] = math.Exp(scores[i] - maxScore)
 		sum += scores[i]
 	}
 	if sum <= 0 {

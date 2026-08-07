@@ -60,6 +60,59 @@ func TestRawScoresHandlesASplitlessTree(t *testing.T) {
 	}
 }
 
+func TestPredictProbabilitiesShiftsByTheOriginalMax(t *testing.T) {
+	// Three classes, one splitless tree each, raw scores {0, 5, 2}: the max is
+	// NOT class 0. The buggy version overwrote scores[best] with exp(0)=1
+	// mid-loop, so classes after best subtracted 1 instead of 5 — quietly
+	// wrong here, Inf/NaN once raw scores grow large.
+	blob := build(3,
+		[]int32{-1, -2, -3},
+		nil, nil, nil, nil,
+		[]float64{0, 5, 2},
+	)
+	model, err := Decode(blob)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	got := model.PredictProbabilities([]float64{0})
+
+	// Softmax of {0,5,2} computed independently.
+	want := []float64{
+		math.Exp(-5) / (math.Exp(-5) + 1 + math.Exp(-3)),
+		1 / (math.Exp(-5) + 1 + math.Exp(-3)),
+		math.Exp(-3) / (math.Exp(-5) + 1 + math.Exp(-3)),
+	}
+	for i := range want {
+		if math.Abs(got[i]-want[i]) > 1e-12 {
+			t.Errorf("class %d probability = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestPredictProbabilitiesSurvivesHugeScores(t *testing.T) {
+	// The production failure: raw scores in the tens of thousands, max at
+	// class 0. The bug produced probabilities of exactly 0 for the winner and
+	// NaN for the runner-up, which then crashed the JSON emitter.
+	blob := build(3,
+		[]int32{-1, -2, -3},
+		nil, nil, nil, nil,
+		[]float64{32909, 25339, -126646},
+	)
+	model, err := Decode(blob)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	got := model.PredictProbabilities([]float64{0})
+	if got[0] < 0.999 {
+		t.Errorf("winner probability = %v, want ~1", got[0])
+	}
+	for i, p := range got {
+		if math.IsNaN(p) || math.IsInf(p, 0) {
+			t.Errorf("class %d probability = %v", i, p)
+		}
+	}
+}
+
 func TestRawScoresMixesSplitlessAndNormalTrees(t *testing.T) {
 	// The real artefact interleaves both kinds, one tree per class per round.
 	// Leaf indices must stay correct across the mix.

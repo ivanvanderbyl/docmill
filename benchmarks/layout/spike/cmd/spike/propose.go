@@ -43,6 +43,9 @@ type proposalRow struct {
 	Single bool      `json:"single"`
 	Class  string    `json:"class,omitempty"`
 	Score  float64   `json:"score,omitempty"`
+	Iou    float64   `json:"iou_pred,omitempty"`
+	NBCls  string    `json:"nb_class,omitempty"`
+	NBScr  float64   `json:"nb_score,omitempty"`
 	F      []float64 `json:"f,omitempty"`
 }
 
@@ -152,14 +155,25 @@ func proposeDocument(ctx context.Context, path string, splitColumns, selected, s
 				features = page.Features[i]
 			}
 			var class string
-			var score float64
+			var score, iouPred float64
 			if i < len(page.Classes) {
 				class, score = page.Classes[i], page.Scores[i]
+			}
+			if i < len(page.Overlaps) {
+				iouPred = page.Overlaps[i]
+			}
+			var nbClass string
+			var nbScore float64
+			if i < len(page.RealClasses) {
+				nbClass, nbScore = page.RealClasses[i], page.RealScores[i]
 			}
 			out = append(out, proposalRow{
 				F:      features,
 				Class:  class,
 				Score:  score,
+				Iou:    iouPred,
+				NBCls:  nbClass,
+				NBScr:  nbScore,
 				Doc:    name,
 				Page:   page.Page,
 				Width:  page.Size.Width,

@@ -17,11 +17,18 @@ type PageProposals struct {
 	// vector computed without it would be a different vector wearing the same
 	// contract).
 	Features [][]float64
-	// Classes and Scores are parallel to Proposals and set only when the
-	// caller asked for selection. With selection on, Proposals holds ONLY the
-	// candidates that survived non-max suppression, so the three stay aligned.
-	Classes []string
-	Scores  []float64
+	// Classes, Scores and Overlaps are parallel to Proposals and set only when
+	// the caller asked for selection. With selection on, Proposals holds ONLY
+	// the candidates that survived non-max suppression, so all four stay
+	// aligned. Overlaps is the IoU head's extent estimate — the second factor
+	// of Rank — and it is emitted so a ranking failure can be diagnosed
+	// offline instead of guessed at.
+	Classes  []string
+	Scores   []float64
+	Overlaps []float64
+	// RealClasses and RealScores mirror ScoredProposal.RealClass/RealScore.
+	RealClasses []string
+	RealScores  []float64
 }
 
 // PageRegionProposals runs the proposer over a document and returns every
@@ -108,23 +115,24 @@ func PageRegionProposals(ctx context.Context, doc Document, splitColumns, select
 				if suppress {
 					kept = SelectRegions(scored)
 				} else {
-					// Classified but not suppressed: everything the model did
-					// not call Background. Comparing the two isolates whether
-					// recall is lost by the classifier or by suppression.
-					kept = kept[:0]
-					for _, candidate := range scored {
-						if candidate.Class != "" && candidate.Class != layoutClassBackground {
-							kept = append(kept, candidate)
-						}
-					}
+					// Unsuppressed mode emits EVERYTHING, Background included.
+					// The offline decision-rule sweep needs the candidates the
+					// argmax rejected — those are precisely the ones a better
+					// threshold might recover — so filtering here would hide
+					// the recoverable half of the recall loss.
+					kept = scored
 				}
 				result.Proposals = make([]RegionProposal, 0, len(kept))
 				result.Classes = make([]string, 0, len(kept))
 				result.Scores = make([]float64, 0, len(kept))
+				result.Overlaps = make([]float64, 0, len(kept))
 				for _, region := range kept {
 					result.Proposals = append(result.Proposals, region.Proposal)
 					result.Classes = append(result.Classes, region.Class)
 					result.Scores = append(result.Scores, region.Score)
+					result.Overlaps = append(result.Overlaps, region.Overlap)
+					result.RealClasses = append(result.RealClasses, region.RealClass)
+					result.RealScores = append(result.RealScores, region.RealScore)
 				}
 			} else {
 				result.Features = make([][]float64, 0, len(proposals))

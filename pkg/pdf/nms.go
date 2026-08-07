@@ -52,6 +52,11 @@ type ScoredProposal struct {
 	// Overlap is the IoU head's estimate of how well this extent matches the
 	// region it is trying to be. Zero when the head is unavailable.
 	Overlap float64
+	// RealClass and RealScore are the best class EXCLUDING Background, with
+	// its probability. When Class is Background these say what the candidate
+	// would be if it is anything; when Class is real they equal Class/Score.
+	RealClass string
+	RealScore float64
 }
 
 // Rank is what suppression sorts by.
