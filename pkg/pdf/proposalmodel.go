@@ -102,12 +102,6 @@ func ClassifyProposals(proposals []RegionProposal, in ProposalFeatureInput) []Sc
 		if len(probabilities) != len(proposalLabelOrder) {
 			return nil
 		}
-		best := 0
-		for i, p := range probabilities {
-			if p > probabilities[best] {
-				best = i
-			}
-		}
 		// The best NON-background class is tracked separately because argmax
 		// over all twelve is not the only sensible decision rule. Background is
 		// 76% of the training data, and a model that biased decides "nothing"
@@ -120,10 +114,17 @@ func ClassifyProposals(proposals []RegionProposal, in ProposalFeatureInput) []Sc
 				bestReal = i
 			}
 		}
+		// The candidate's CLASS is the best real class, not the overall
+		// argmax. Background is 76% of the training data, and letting it win
+		// the argmax silently discarded candidates whose runner-up was
+		// correct — 22.6% of all tables on the diagnosis sample. Background
+		// still gets its veto, but through the rank threshold in
+		// SelectRegions, where it competes against extent quality instead of
+		// winning outright.
 		candidate := ScoredProposal{
 			Proposal:   proposal,
-			Class:      proposalLabelOrder[best],
-			Score:      probabilities[best],
+			Class:      proposalLabelOrder[bestReal],
+			Score:      probabilities[bestReal],
 			Background: probabilities[backgroundIndex],
 			RealClass:  proposalLabelOrder[bestReal],
 			RealScore:  probabilities[bestReal],

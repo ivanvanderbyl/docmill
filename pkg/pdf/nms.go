@@ -35,6 +35,14 @@ const (
 	// accepted table has tiny IoU with it but is not a separate region, and IoU
 	// alone will never say so because the areas are so different.
 	nmsContainmentThreshold = 0.8
+
+	// nmsKeepThreshold is the minimum Rank a candidate needs to enter the
+	// competition at all. Swept offline over a seeded random 800-page val
+	// sample against the greedy one-to-one matcher: 0.1 scores 0.5448, 0.2
+	// scores 0.5525, 0.3 scores 0.5469, argmax-over-all-classes 0.5399. The
+	// Python simulator this was swept in matches the Go path to four decimal
+	// places on the same input, so the offline choice transfers.
+	nmsKeepThreshold = 0.2
 )
 
 // ScoredProposal is a candidate with the region model's verdict.
@@ -88,6 +96,15 @@ func SelectRegions(scored []ScoredProposal) []ScoredProposal {
 	candidates := make([]ScoredProposal, 0, len(scored))
 	for _, candidate := range scored {
 		if candidate.Class == "" || candidate.Class == layoutClassBackground {
+			continue
+		}
+		// Class is now the best REAL class, so Background's veto lives here:
+		// a candidate that is probably nothing has a low real-class score, a
+		// low predicted overlap, or both, and the product falls under the
+		// threshold. Candidates constructed without scores (tests, callers
+		// bypassing the classifier) pass Rank>0 checks untouched only if they
+		// clear the same bar, which keeps one definition of "keepable".
+		if candidate.Rank() < nmsKeepThreshold {
 			continue
 		}
 		candidates = append(candidates, candidate)
