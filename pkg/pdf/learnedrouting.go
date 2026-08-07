@@ -32,6 +32,10 @@ import (
 // The model's label set, which is DocLayNet's vocabulary rather than docmill's.
 // The mapping onto docmill routing is the plan's label table.
 const (
+	// layoutClassBackground is the model's "not a region of interest" class.
+	// The line model uses it for lines no annotator marked; the region model
+	// uses it for candidates that are not regions at all.
+	layoutClassBackground    = "Background"
 	layoutClassSectionHeader = "Section-header"
 	layoutClassTitle         = "Title"
 	layoutClassListItem      = "List-item"

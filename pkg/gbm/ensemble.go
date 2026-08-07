@@ -177,6 +177,39 @@ func (e *Ensemble) PredictClass(features []float64) (int, string, float64) {
 	return best, label, probability
 }
 
+// PredictProbabilities returns the softmax over all classes.
+//
+// PredictClass returns only the winner's probability, which is enough for a
+// routing decision but not for comparing candidates: non-max suppression needs
+// every candidate scored on the same scale, and a caller that wants to trade
+// recall for precision needs the losing classes too.
+func (e *Ensemble) PredictProbabilities(features []float64) []float64 {
+	scores := make([]float64, e.numClass)
+	e.RawScores(features, scores)
+
+	// Softmax shifted by the maximum. Exponentiating raw scores directly
+	// overflows for confident predictions, and the shift is exact rather than
+	// an approximation: it cancels in the ratio.
+	best := 0
+	for i := 1; i < len(scores); i++ {
+		if scores[i] > scores[best] {
+			best = i
+		}
+	}
+	sum := 0.0
+	for i := range scores {
+		scores[i] = math.Exp(scores[i] - scores[best])
+		sum += scores[i]
+	}
+	if sum <= 0 {
+		return scores
+	}
+	for i := range scores {
+		scores[i] /= sum
+	}
+	return scores
+}
+
 // PredictBinary returns P(positive) for a single-output model.
 //
 // The caller compares it against 0.5, which is argmax over the two classes

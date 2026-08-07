@@ -121,6 +121,10 @@ type ExtractionOptions struct {
 	// across their neighbours. It changes the LINE SET every later stage sees,
 	// so it is the one option here that is not purely additive.
 	SplitColumnLines bool
+	// LearnedProposals runs the full region stage — propose, classify,
+	// suppress — and exposes the result. It implies InkProposals, because half
+	// the proposal sources are ink.
+	LearnedProposals bool
 
 	// drawn is the per-page result of that walk. It is unexported because it is
 	// not a caller's choice — the page stage fills it in on the way through,
@@ -426,7 +430,7 @@ func extractPage(ctx context.Context, doc Document, index int, options Extractio
 			}
 		}
 	}
-	if options.InkProposals {
+	if options.InkProposals || options.LearnedProposals {
 		if provider, ok := pdfPage.(drawnObjectProvider); ok {
 			drawn, err = runStage(ctx, "drawn_objects", provider.DrawnObjects)
 			if err != nil {

@@ -48,7 +48,7 @@ var featureNames = docpdf.LayoutFeatureContract()
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: spike <emit|drawn|propose|regions|explain|features> [args]")
+		fmt.Fprintln(os.Stderr, "usage: spike <emit|drawn|propose|regions|explain|features|proposal-features> [args]")
 		os.Exit(2)
 	}
 	var err error
@@ -66,6 +66,8 @@ func main() {
 	case "features":
 		// Print the feature-name contract so train.py can assert against it.
 		err = json.NewEncoder(os.Stdout).Encode(featureNames)
+	case "proposal-features":
+		err = json.NewEncoder(os.Stdout).Encode(docpdf.ProposalFeatureContract())
 	default:
 		err = fmt.Errorf("unknown subcommand %q", os.Args[1])
 	}

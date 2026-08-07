@@ -26,21 +26,24 @@ import (
 // candidates — would mean retraining.
 
 type proposalRow struct {
-	Doc    string  `json:"doc"`
-	Page   int     `json:"page"`
-	Width  float64 `json:"page_w"`
-	Height float64 `json:"page_h"`
-	L      float64 `json:"l"`
-	T      float64 `json:"t"`
-	R      float64 `json:"r"`
-	B      float64 `json:"b"`
-	Source string  `json:"source"`
-	Lines  int     `json:"lines"`
-	Span   int     `json:"span"`
-	Ink    int     `json:"ink"`
-	Images int     `json:"images"`
-	Paths  int     `json:"paths"`
-	Single bool    `json:"single"`
+	Doc    string    `json:"doc"`
+	Page   int       `json:"page"`
+	Width  float64   `json:"page_w"`
+	Height float64   `json:"page_h"`
+	L      float64   `json:"l"`
+	T      float64   `json:"t"`
+	R      float64   `json:"r"`
+	B      float64   `json:"b"`
+	Source string    `json:"source"`
+	Lines  int       `json:"lines"`
+	Span   int       `json:"span"`
+	Ink    int       `json:"ink"`
+	Images int       `json:"images"`
+	Paths  int       `json:"paths"`
+	Single bool      `json:"single"`
+	Class  string    `json:"class,omitempty"`
+	Score  float64   `json:"score,omitempty"`
+	F      []float64 `json:"f,omitempty"`
 }
 
 func runPropose(args []string) error {
@@ -49,6 +52,7 @@ func runPropose(args []string) error {
 	jobs := flags.Int("jobs", runtime.NumCPU(), "parallel workers")
 	quiet := flags.Bool("quiet", false, "suppress per-document progress")
 	splitColumns := flags.Bool("split-columns", false, "split assembled lines at persistent column gaps first")
+	selected := flags.Bool("select", false, "classify and suppress, emitting only the regions that survive")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -80,7 +84,7 @@ func runPropose(args []string) error {
 		go func() {
 			defer wg.Done()
 			for path := range work {
-				rows, err := proposeDocument(context.Background(), path, *splitColumns)
+				rows, err := proposeDocument(context.Background(), path, *splitColumns, *selected)
 				if err != nil {
 					failures.Add(1)
 					fmt.Fprintf(os.Stderr, "skip %s: %v\n", filepath.Base(path), err)
@@ -119,7 +123,7 @@ func runPropose(args []string) error {
 	return nil
 }
 
-func proposeDocument(ctx context.Context, path string, splitColumns bool) ([]proposalRow, error) {
+func proposeDocument(ctx context.Context, path string, splitColumns, selected bool) ([]proposalRow, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -134,15 +138,27 @@ func proposeDocument(ctx context.Context, path string, splitColumns bool) ([]pro
 	defer doc.Close()
 
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	pages, err := docpdf.PageRegionProposals(ctx, doc, splitColumns)
+	pages, err := docpdf.PageRegionProposals(ctx, doc, splitColumns, selected)
 	if err != nil {
 		return nil, err
 	}
 
 	var out []proposalRow
 	for _, page := range pages {
-		for _, proposal := range page.Proposals {
+		for i, proposal := range page.Proposals {
+			var features []float64
+			if i < len(page.Features) {
+				features = page.Features[i]
+			}
+			var class string
+			var score float64
+			if i < len(page.Classes) {
+				class, score = page.Classes[i], page.Scores[i]
+			}
 			out = append(out, proposalRow{
+				F:      features,
+				Class:  class,
+				Score:  score,
 				Doc:    name,
 				Page:   page.Page,
 				Width:  page.Size.Width,
