@@ -44,6 +44,7 @@ func runRender(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	pageSpec := flags.String("pages", "", "comma-separated 1-based page numbers (default all)")
 	kinds := flags.String("kinds", "", "comma-separated kinds to draw: text,path,image,shading,form (default all)")
 	asJSON := flags.Bool("json", false, "write one JSON object per page to stdout instead of PNGs")
+	regions := flags.Bool("regions", false, "run the learned region stage and draw its decomposition instead of raw objects")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -76,6 +77,10 @@ func runRender(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	}
 	stem := strings.TrimSuffix(filepath.Base(flags.Arg(0)), filepath.Ext(flags.Arg(0)))
 	encoder := json.NewEncoder(stdout)
+
+	if *regions {
+		return renderRegions(ctx, doc, stem, *outDir, *scale, wanted, *asJSON, stdout)
+	}
 
 	count, err := doc.PageCount(ctx)
 	if err != nil {

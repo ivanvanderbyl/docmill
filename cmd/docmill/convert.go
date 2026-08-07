@@ -20,6 +20,8 @@ func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		"classify lines with the embedded layout model instead of the hand-tuned detectors (headings, list items, figure innards, formulas)")
 	learnedRegions := flags.Bool("learned-regions", false,
 		"gate structural regions with the region model (requires -learned-layout)")
+	regionMarkdown := flags.Bool("region-markdown", false,
+		"let the learned region stage drive the whole page: regions become Markdown by class (experimental)")
 	learnedColumns := flags.Bool("learned-columns", false,
 		"derive table column boundaries with the FinTabNet-trained model instead of the densest-row heuristic")
 	// No stripArgSeparator here: "--" is the flag package's own end-of-flags
@@ -31,7 +33,7 @@ func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) er
 
 	rest := flags.Args()
 	if len(rest) != 1 {
-		err := fmt.Errorf("usage: docmill [convert] [-learned-layout] [-learned-regions] [-learned-columns] <input.pdf>")
+		err := fmt.Errorf("usage: docmill [convert] [-learned-layout] [-learned-regions] [-learned-columns] [-region-markdown] <input.pdf>")
 		_, _ = fmt.Fprintln(stderr, err)
 		return err
 	}
@@ -56,7 +58,7 @@ func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	}
 	defer doc.Close()
 
-	markdown, err := docpdf.ExtractMarkdownWithOptions(ctx, doc, convertOptions(*learnedLayout, *learnedColumns, *learnedRegions))
+	markdown, err := docpdf.ExtractMarkdownWithOptions(ctx, doc, convertOptions(*learnedLayout, *learnedColumns, *learnedRegions, *regionMarkdown))
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "extract Markdown: %v\n", err)
 		return err
@@ -71,7 +73,7 @@ func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) er
 //
 // Without the flag the options are exactly ExtractMarkdown's, so the default
 // conversion stays byte-identical to what it produces today.
-func convertOptions(learnedLayout, learnedColumns, learnedRegions bool) docpdf.ExtractionOptions {
+func convertOptions(learnedLayout, learnedColumns, learnedRegions, regionMarkdown bool) docpdf.ExtractionOptions {
 	options := docpdf.ExtractionOptions{
 		DetectTables:    true,
 		ReadingOrder:    true,
@@ -104,6 +106,12 @@ func convertOptions(learnedLayout, learnedColumns, learnedRegions bool) docpdf.E
 		// where the rulings reach the detector.
 		options.ClassifyThenRoute = true
 		options.LearnedColumns = true
+	}
+	if regionMarkdown {
+		// The region stage owns the page outright. It builds its own line
+		// labels internally, so none of the other learned flags are implied —
+		// this path replaces the routed pipeline rather than extending it.
+		options.RegionRouting = true
 	}
 	return options
 }

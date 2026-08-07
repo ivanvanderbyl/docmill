@@ -116,6 +116,9 @@ Commands:
                        paths, images, shadings and form XObjects — each clipped
                        to what is actually visible
                        -out dir, -scale n, -pages 1,2, -kinds image,path
+                       -regions draws the learned region stage instead: one
+                       labelled, colour-coded box per detected region
+                       (-json emits the same decomposition as JSON)
   json                 read a JSON document on stdin, write Markdown to stdout
   benchmark            run the cross-tool DPBench benchmark
 `, name)

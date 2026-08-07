@@ -125,6 +125,13 @@ type ExtractionOptions struct {
 	// suppress — and exposes the result. It implies InkProposals, because half
 	// the proposal sources are ink.
 	LearnedProposals bool
+	// RegionRouting hands the WHOLE page to the region stage: kept regions
+	// become Markdown according to their class, tables run the grid machinery
+	// only inside model-approved boxes, and picture innards are dropped. The
+	// experimental end state of the plan, behind a flag because the measured
+	// quality (0.55 weighted F1 on DocLayNet regions) does not yet beat the
+	// tuned pipeline; the flag exists to SEE the difference on real documents.
+	RegionRouting bool
 
 	// drawn is the per-page result of that walk. It is unexported because it is
 	// not a caller's choice — the page stage fills it in on the way through,
@@ -430,7 +437,7 @@ func extractPage(ctx context.Context, doc Document, index int, options Extractio
 			}
 		}
 	}
-	if options.InkProposals || options.LearnedProposals {
+	if options.InkProposals || options.LearnedProposals || options.RegionRouting {
 		if provider, ok := pdfPage.(drawnObjectProvider); ok {
 			drawn, err = runStage(ctx, "drawn_objects", provider.DrawnObjects)
 			if err != nil {
@@ -468,6 +475,9 @@ type markdownBlock struct {
 }
 
 func pageMarkdownBlocks(ctx context.Context, cells []page.TextCell, wordCells []page.TextCell, rulings []page.RulingSegment, formFields []page.FormField, size geom.Size, options ExtractionOptions) ([]markdownBlock, error) {
+	if options.RegionRouting {
+		return pageMarkdownBlocksRegionRouted(ctx, cells, wordCells, rulings, formFields, size, options)
+	}
 	if options.ClassifyThenRoute {
 		return pageMarkdownBlocksRouted(ctx, cells, wordCells, rulings, formFields, size, options)
 	}
