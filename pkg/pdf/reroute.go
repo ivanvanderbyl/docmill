@@ -70,6 +70,13 @@ func pageMarkdownBlocksRouted(ctx context.Context, cells []page.TextCell, wordCe
 	// inference, and it is the set the Task 2 emitter dumps for training, which
 	// is what keeps the two free of skew.
 	allLines := AssembleLineElements(cells, ParagraphOptions{}.withDefaults().LineTolerance)
+	if options.SplitColumnLines {
+		// A line that straddles two columns belongs to neither of the regions
+		// an annotator would draw, so this runs BEFORE anything classifies or
+		// groups. Splitting afterwards would leave every downstream stage
+		// reasoning about the joined line it was given.
+		allLines = SplitLinesAtColumnGaps(allLines, size)
+	}
 
 	// The model runs once per page over the class-agnostic lines; every routing
 	// decision below consults the same labels.

@@ -54,6 +54,13 @@ type formFieldProvider interface {
 	FormFields(ctx context.Context) ([]page.FormField, error)
 }
 
+// drawnObjectProvider reports everything the page draws, each clipped to what
+// is visible. It is optional in the same way rulings are: a backend that cannot
+// supply it still works, and the ink-based proposals simply do not exist.
+type drawnObjectProvider interface {
+	DrawnObjects(ctx context.Context) ([]page.DrawnObject, error)
+}
+
 type ExtractionOptions struct {
 	DetectTables bool
 	ReadingOrder bool
@@ -105,6 +112,20 @@ type ExtractionOptions struct {
 	// of same-label lines only stands if the second stage accepts it. Requires
 	// LearnedRouting; OFF by default.
 	LearnedRegions bool
+	// InkProposals asks the backend for everything the page draws, so region
+	// candidates can be built from ink as well as from assembled text lines.
+	// It costs one extra content-stream walk per page and nothing else: no
+	// decision reads it unless a learned stage is also on.
+	InkProposals bool
+	// SplitColumnLines cuts assembled lines at horizontal gaps that persist
+	// across their neighbours. It changes the LINE SET every later stage sees,
+	// so it is the one option here that is not purely additive.
+	SplitColumnLines bool
+
+	// drawn is the per-page result of that walk. It is unexported because it is
+	// not a caller's choice — the page stage fills it in on the way through,
+	// and a caller setting it by hand would be describing a different page.
+	drawn []page.DrawnObject
 }
 
 const defaultMaxParallelPages = 12
@@ -384,6 +405,7 @@ func extractPage(ctx context.Context, doc Document, index int, options Extractio
 	var rulings []page.RulingSegment
 	var wordCells []page.TextCell
 	var formFields []page.FormField
+	var drawn []page.DrawnObject
 	if provider, ok := pdfPage.(formFieldProvider); ok {
 		formFields, err = runStage(ctx, "form_fields", provider.FormFields)
 		if err != nil {
@@ -404,9 +426,18 @@ func extractPage(ctx context.Context, doc Document, index int, options Extractio
 			}
 		}
 	}
+	if options.InkProposals {
+		if provider, ok := pdfPage.(drawnObjectProvider); ok {
+			drawn, err = runStage(ctx, "drawn_objects", provider.DrawnObjects)
+			if err != nil {
+				return nil, geom.Size{}, err
+			}
+		}
+	}
 	span.SetAttributes(attribute.Int("text_cells", len(cells)))
 	textCellsPerPage.Record(ctx, int64(len(cells)))
 
+	options.drawn = drawn
 	blocks, err := pageMarkdownBlocks(ctx, cells, wordCells, rulings, formFields, size, options)
 	if err != nil {
 		return nil, geom.Size{}, err

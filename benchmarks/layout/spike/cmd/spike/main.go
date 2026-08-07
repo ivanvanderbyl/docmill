@@ -12,6 +12,8 @@
 //	drawn     one JSONL row per page: every object the content-stream
 //	          interpreter draws, with its visible box — text, paths, images,
 //	          shadings and form XObjects
+//	propose   one JSONL row per candidate region the SHIPPING Go proposer
+//	          offers, from both text runs and ink clusters
 //	regions   one JSONL row per candidate region: the line model's proposed
 //	          class plus the region-scoped feature vector
 //	features  print the feature contract, for the Python trainer to assert on
@@ -46,7 +48,7 @@ var featureNames = docpdf.LayoutFeatureContract()
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: spike <emit|drawn|regions|explain|features> [args]")
+		fmt.Fprintln(os.Stderr, "usage: spike <emit|drawn|propose|regions|explain|features> [args]")
 		os.Exit(2)
 	}
 	var err error
@@ -57,6 +59,8 @@ func main() {
 		err = runRegions(os.Args[2:])
 	case "drawn":
 		err = runDrawn(os.Args[2:])
+	case "propose":
+		err = runPropose(os.Args[2:])
 	case "explain":
 		err = runExplain(os.Args[2:])
 	case "features":
