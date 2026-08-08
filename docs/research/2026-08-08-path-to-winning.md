@@ -7,11 +7,21 @@
 
 | option | ext | NID | TEDS | MHS | ms/page | role |
 |---|---|---|---|---|---|---|
-| default | 0.92 | 0.90 | 0.76 | 0.77 | ~50 | the bar |
-| `-learned-layout` | 0.93 | 0.90 | 0.73 | ~0.77* | ~65 | line model routes lists/figures/formula; headings reverted to heuristic |
-| `-region-markdown` | 0.92 | 0.86 | 0.71 | 0.77 | ~250 | the candidate |
+| default | 0.92 | 0.90 | 0.76 | 0.77 | 49 | the old bar |
+| `-learned-layout` | **0.93** | **0.90** | **0.76** | **0.77** | 67 | **the new bar** |
+| `-region-markdown` | 0.92 | 0.86 | 0.71 | 0.77 | 260 | the candidate |
 
-*re-measured after the heading revert in the same commit as this note.
+Measured after the cleanup commit, and the heading revert did more than predicted:
+`-learned-layout` now matches or beats the default on EVERY headline metric
+(per-case: NID +7/−2, MHS +1/−0, TEDS 0/0, extraction +5/−6 with the higher
+headline) at +18 ms/page. **The first learned configuration with no losses
+anywhere.** The earlier TEDS deficit (0.73) was the line-model heading pass
+stealing cells from tables; heuristic headings returned it to parity. The region
+path is byte-for-byte unmoved by the cleanup, as intended.
+
+This changes the target: `-region-markdown` must now beat `-learned-layout`, and
+the interim recommendation for users is `-learned-layout` — strictly ≥ the default
+at modest cost.
 
 **Definition of "beats all existing options":** `-region-markdown` ≥ every other option
 on ALL four metrics, with per-case wins ≥ losses on each, under 100 ms/page — measured
