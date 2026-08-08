@@ -37,6 +37,10 @@ type PageObjectHolder struct {
 	allCTMs        map[int32]crt.Matrix
 	sortedCTMKeys  []int32
 
+	// bbox is the holder's own box — the page box for a Page, the transformed
+	// /BBox for a Form. It reaches the stream parser as the rcBBox argument.
+	bbox crt.FloatRect
+
 	state  parseState
 	parser *ContentParser
 
@@ -244,6 +248,9 @@ func newFormObject(contentStream int32, form *Form, matrix crt.Matrix) *FormObje
 }
 
 func (o *FormObject) getType() objectType { return typeForm }
+
+// Kind reports that this is a form XObject reference.
+func (o *FormObject) Kind() ObjectKind { return KindForm }
 
 // FormMatrix returns the form-space -> user-space matrix (ctm * contentToUser
 // of the enclosing parser).

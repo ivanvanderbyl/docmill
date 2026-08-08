@@ -27,10 +27,31 @@ const (
 	typeForm    objectType = 5
 )
 
+// ObjectKind is objectType exposed to callers, so a consumer can sort objects
+// by what they are without a type switch over unexported concrete types.
+type ObjectKind int
+
+const (
+	KindText    ObjectKind = ObjectKind(typeText)
+	KindPath    ObjectKind = ObjectKind(typePath)
+	KindImage   ObjectKind = ObjectKind(typeImage)
+	KindShading ObjectKind = ObjectKind(typeShading)
+	KindForm    ObjectKind = ObjectKind(typeForm)
+)
+
 // PageObject is the sealed base interface every parsed object implements.
 type PageObject interface {
-	// Rect returns the object's bounding box in user space.
+	// Rect returns the object's bounding box in user space, BEFORE clipping.
 	Rect() crt.FloatRect
+	// VisibleRect returns the part of Rect that survives the clip in force
+	// when the object was emitted, and whether any of it does.
+	VisibleRect() (crt.FloatRect, bool)
+	// ClipPath returns the clip in force when the object was emitted. A
+	// consumer walking into a form needs it to intersect down into the
+	// children, which do not inherit it through the interpreter.
+	ClipPath() ClipPath
+	// Kind reports which sort of object this is.
+	Kind() ObjectKind
 	// IsActive reports whether the object is active (always true on the read
 	// path; the mutation APIs that toggle it are not ported).
 	IsActive() bool
@@ -59,6 +80,7 @@ type baseObject struct {
 	contentStream int32
 	resourceName  string
 	isActive      bool
+	clipPath      ClipPath
 }
 
 func newBaseObject(contentStream int32) baseObject {
@@ -71,6 +93,22 @@ func newBaseObject(contentStream int32) baseObject {
 
 // Rect returns the object's user-space bounding box.
 func (b *baseObject) Rect() crt.FloatRect { return b.rect }
+
+// ClipPath returns the clip in force when the object was emitted.
+func (b *baseObject) ClipPath() ClipPath { return b.clipPath }
+
+// SetClipPath records the clip in force at emit time. The interpreter calls
+// this rather than the object reading interpreter state, because an object
+// outlives the q/Q nesting that produced it.
+func (b *baseObject) SetClipPath(c ClipPath) { b.clipPath = c }
+
+// VisibleRect returns the clipped bounding box and whether any of the object
+// survives the clip.
+//
+// Clipping is reported here rather than applied to rect, so callers who want
+// the geometry as authored still have it. Nothing existing is disturbed by
+// tracking a clip; only callers that ask get the narrower answer.
+func (b *baseObject) VisibleRect() (crt.FloatRect, bool) { return b.clipPath.Clip(b.rect) }
 
 // SetRect sets the bounding box (the interpreter writes it from CalcPositionData).
 func (b *baseObject) SetRect(r crt.FloatRect) { b.rect = r }

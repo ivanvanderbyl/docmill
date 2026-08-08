@@ -3,8 +3,12 @@
 // ContentParser concatenates a page's /Contents (single stream or array, each
 // followed by a single 0x20 separator) into one buffer, records each stream's
 // start offset, and runs the StreamContentParser in bounded steps. Form mode
-// builds the parser with the form's /Matrix and parent matrix (the /BBox clip
-// is not tracked — clip state is inert for text extraction).
+// builds the parser with the form's /Matrix and parent matrix, and seeds the
+// interpreter's clip with the form's /BBox — the C++ ctor does this too
+// (cpdf_contentparser.cpp:78-95), and it is load-bearing rather than
+// decorative: a form XObject's /BBox clips its content, so a figure drawn from
+// an oversized form reports the form's extent instead of the visible one
+// without it.
 package page
 
 import (
@@ -44,12 +48,19 @@ type ContentParser struct {
 	parentMatrix   *crt.Matrix
 	formStates     *AllStates
 	isForm         bool
+
+	// bbox is the rcBBox ctor argument: the page box for a page, the
+	// transformed /BBox for a form. Handle_ShadeFill needs it, because an
+	// unclipped `sh` covers the whole of it.
+	bbox crt.FloatRect
+	// formClip is the form's /BBox as a clip, nil when the form has no /BBox.
+	formClip *crt.FloatRect
 }
 
 // newContentParserForPage ports CPDF_ContentParser(CPDF_Page*)
 // (cpdf_contentparser.cpp:31).
 func newContentParserForPage(holder *PageObjectHolder) *ContentParser {
-	cp := &ContentParser{holder: holder, stage: stageGetContent}
+	cp := &ContentParser{holder: holder, stage: stageGetContent, bbox: holder.bbox}
 	content := holder.dict.GetDirectObjectFor("Contents")
 	if content == nil {
 		cp.stage = stageComplete
@@ -92,6 +103,20 @@ func newContentParserForForm(form *Form, graphicStates *AllStates, parentMatrix 
 		formMatrix.Concat(graphicStates.CTM())
 	}
 	cp.formMatrix = formMatrix
+
+	// The /BBox becomes both the parser's bbox and its initial clip, each
+	// transformed by the form matrix and then the parent matrix — the same
+	// two transforms the C++ ctor applies, in the same order.
+	if bboxArray := dict.GetArrayFor("BBox"); bboxArray != nil {
+		formBBox := bboxArray.GetRect()
+		formBBox = formMatrix.TransformRect(formBBox)
+		if parentMatrix != nil {
+			formBBox = parentMatrix.TransformRect(formBBox)
+		}
+		cp.bbox = formBBox
+		clip := formBBox
+		cp.formClip = &clip
+	}
 
 	cp.singleStream = objects.NewStreamAcc(form.formStream)
 	cp.singleStream.LoadAllDataFiltered()
@@ -210,6 +235,7 @@ func (cp *ContentParser) startPageParser() {
 		nil, // contentToUser
 		cp.holder,
 		cp.holder.resources,
+		cp.bbox,
 		nil, // graphicStates
 		cp.recursionState,
 	)
@@ -224,11 +250,15 @@ func (cp *ContentParser) startFormParser() {
 		cp.parentMatrix,
 		cp.holder,
 		cp.holder.resources,
+		cp.bbox,
 		cp.formStates,
 		cp.recursionState,
 	)
 	cp.parser.GetCurStates().SetCTM(cp.formMatrix)
 	cp.parser.GetCurStates().SetParentMatrix(cp.formMatrix)
+	if cp.formClip != nil {
+		cp.parser.GetCurStates().MutableClipPath().IntersectRect(*cp.formClip)
+	}
 	cp.wireForm(cp.parser)
 }
 

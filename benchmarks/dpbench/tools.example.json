@@ -54,6 +54,13 @@
       "command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "pypdf", "{{input}}", "{{output}}"],
       "output_mode": "file",
       "timeout_seconds": 120
+    },
+    {
+      "name": "pdf-inspector",
+      "version_command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "pdf-inspector", "--version"],
+      "command": ["python3", "benchmarks/dpbench/python_converter.py", "--tool", "pdf-inspector", "{{input}}", "{{output}}"],
+      "output_mode": "file",
+      "timeout_seconds": 120
     }
   ]
 }

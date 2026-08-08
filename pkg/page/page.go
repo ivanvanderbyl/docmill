@@ -41,6 +41,46 @@ type RulingSegment struct {
 	Origin geom.CoordOrigin
 }
 
+// DrawnKind is what a DrawnObject is: text, a path, an image, a shading, or a
+// form XObject reference.
+type DrawnKind string
+
+const (
+	DrawnText    DrawnKind = "text"
+	DrawnPath    DrawnKind = "path"
+	DrawnImage   DrawnKind = "image"
+	DrawnShading DrawnKind = "shading"
+	DrawnForm    DrawnKind = "form"
+)
+
+// DrawnObject is one thing the page draws, at the position it lands on the
+// page.
+//
+// This is the page as a renderer sees it, rather than as a text extractor sees
+// it. Text cells and ruling segments answer "what words are here" and "what
+// lines are ruled"; neither can answer "is there a picture here", because a
+// photograph contains no text and no strokes. Measured on DocLayNet, 39.8% of
+// annotated picture regions contain no assembled text line at all, so a layout
+// model built only on text is blind to them by construction.
+//
+// Box is already clipped: it is the visible extent, not the authored one. An
+// object clipped away entirely is not reported at all.
+type DrawnObject struct {
+	Kind DrawnKind
+	Box  geom.Box
+	// Stroked and Filled apply to paths. A stroked path is a drawn line; a
+	// filled one is a solid shape. They are not exclusive — `B` does both.
+	Stroked bool
+	Filled  bool
+	// Inline marks an image that came from a BI/ID/EI inline image rather than
+	// an image XObject.
+	Inline bool
+	// Depth is the form-XObject nesting level, 0 for objects drawn directly by
+	// the page. Nested content is reported alongside the form that contains it,
+	// so a consumer can either use the form as one unit or descend into it.
+	Depth int
+}
+
 type SegmentedPage struct {
 	TextlineCells []TextCell
 }

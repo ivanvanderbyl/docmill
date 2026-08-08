@@ -55,7 +55,20 @@ type headingLine struct {
 	level  int
 }
 
+// headingDecider overrides the hand-tuned heading test. When non-nil it is
+// consulted INSTEAD of isHeadingLine, which is the single decision Task 6
+// migrates for this class. Everything downstream — level assignment, adjacent
+// merging, leading-marker attachment, the contents-page filters — is kept
+// deliberately: the plan says heading LEVEL assignment survives because the
+// teacher is flat on headings, and the rest is block construction rather than
+// classification.
+type headingDecider func(line ParagraphTextLine) bool
+
 func splitHeadingCellsProtecting(cells []page.TextCell, size geom.Size, protected map[int]bool) ([]markdownBlock, []page.TextCell) {
+	return splitHeadingCellsWith(cells, size, protected, nil)
+}
+
+func splitHeadingCellsWith(cells []page.TextCell, size geom.Size, protected map[int]bool, decide headingDecider) ([]markdownBlock, []page.TextCell) {
 	if len(cells) == 0 {
 		return nil, nil
 	}
@@ -113,6 +126,15 @@ func splitHeadingCellsProtecting(cells []page.TextCell, size geom.Size, protecte
 			}
 			following := followingLines(lines, i, 4)
 			metric := lineMetric(line)
+			if decide != nil {
+				// Model-owned: one call, no thresholds, and no structural
+				// splitting fallback — the model sees the whole line and either
+				// calls it a heading or does not.
+				if decide(line) {
+					headings = append(headings, headingLine{line: line, metric: metric})
+				}
+				continue
+			}
 			if isHeadingLine(line, metric, bodyMetric, size, prev, next) {
 				headings = append(headings, headingLine{line: line, metric: metric})
 				continue
@@ -851,6 +873,34 @@ func lineMetric(line ParagraphTextLine) float64 {
 	return line.BBox.Height()
 }
 
+// linePeakMetric returns the LARGEST cell size on a line, as line.FontSize used
+// to before it became the dominant (character-weighted median) size.
+//
+// Invariant encoded: running body prose is set in ONE size. A line that mixes
+// body-sized text with a run of materially larger glyphs is structured content
+// — a label/value table row whose stub column is set larger than its value
+// column, a run-in header, a wrapped title fragment — not a plain paragraph.
+// Callers that ask "is this line ordinary body prose?" therefore need the
+// line's PEAK size, because the question is whether any prominent run is
+// present at all, not what the majority of the line is set in. Callers that ask
+// "how prominent is this line?" want lineMetric instead, so one oversized
+// delimiter cannot make a body line read as a title.
+func linePeakMetric(line ParagraphTextLine) float64 {
+	peak := 0.0
+	for _, cell := range line.Cells {
+		if isListSpacerText(strings.TrimSpace(cell.Text)) {
+			continue
+		}
+		if cell.FontSize > peak {
+			peak = cell.FontSize
+		}
+	}
+	if peak > 0 {
+		return peak
+	}
+	return lineMetric(line)
+}
+
 func splitStructuralHeadingCandidates(line ParagraphTextLine) []ParagraphTextLine {
 	if len(line.Cells) < 2 {
 		return nil
@@ -1300,11 +1350,34 @@ func isStructuralHeadingLine(line ParagraphTextLine, size geom.Size) bool {
 	// An all-caps line is a heading only if it is positioned like one (see
 	// headingPositioned): a body-size all-caps word floating mid-page (e.g.
 	// "MINISTER" atop the right column of a two-column key/value list) is a column
-	// header, not a section header.
-	if len(words) <= 12 && mostlyUppercase(text) && !isShortAllCapsAcronym(text) && !isNumericDominantLine(words) && headingPositioned(line, size) {
+	// header, not a section header. An italic-dominant "all-caps" line is display
+	// mathematics, not a heading — single-letter math variables are capitals set
+	// in the italic math font ("FN = NGN (N 1) GN1"), a register section titles
+	// never use.
+	// A sentence-final period also rejects: an all-caps SENTENCE (typeset
+	// sample text, a quoted telegram) ends with one; a section title does not.
+	if len(words) <= 12 && mostlyUppercase(text) && !strings.HasSuffix(text, ".") && !isShortAllCapsAcronym(text) && !isNumericDominantLine(words) && !lineMostlyItalic(line) && headingPositioned(line, size) {
 		return true
 	}
 	return false
+}
+
+// lineMostlyItalic reports whether ≥60% of a line's characters sit in italic
+// cells (font-descriptor Italic flag or an Italic/Oblique font name).
+func lineMostlyItalic(line ParagraphTextLine) bool {
+	total, italic := 0, 0
+	for _, cell := range line.Cells {
+		t := strings.TrimSpace(cell.Text)
+		if t == "" {
+			continue
+		}
+		n := utf8.RuneCountInString(t)
+		total += n
+		if cell.IsItalic() {
+			italic += n
+		}
+	}
+	return total > 0 && float64(italic)/float64(total) >= 0.6
 }
 
 // isNumericDominantLine reports whether a line is dominated by numeric tokens, e.g. a
@@ -1546,7 +1619,7 @@ func hasAlignedBodyLikeFollowingLine(line, next ParagraphTextLine, bodyMetric fl
 	if text == "" || strings.ContainsAny(text, "@{}") {
 		return false
 	}
-	if bodyMetric > 0 && lineMetric(next) > bodyMetric*1.08 {
+	if bodyMetric > 0 && linePeakMetric(next) > bodyMetric*1.08 {
 		return false
 	}
 	if line.BBox.L-next.BBox.L > math.Max(24, line.BBox.Height()*2.5) {
@@ -1735,14 +1808,49 @@ func isDecimalHeadingText(text string) bool {
 		if value >= 100 {
 			return false
 		}
-		if !strings.Contains(marker, ".") && value > 20 {
+		// A single-integer marker above 20 is usually a long enumerated list,
+		// not a section number — unless the title is set in caps, the register
+		// running lists never use (documents with 20+ numbered sections
+		// conventionally set them in caps: "21. ENTROPY OF AN ENSEMBLE...").
+		if !strings.Contains(marker, ".") && value > 20 && !mostlyUppercase(rest) {
 			return false
 		}
 	}
-	if !strings.Contains(marker, ".") && len(wordsForHeading(rest)) > 7 {
-		return false
+	if !strings.Contains(marker, ".") {
+		if len(wordsForHeading(rest)) > 7 {
+			return false
+		}
+		// A sentence-final period or a lead-in colon after a single-integer
+		// marker is list-item shape ("1. Zero-order approximation (symbols
+		// independent and equiprobable)."), not a section title.
+		trimmedRest := strings.TrimSpace(rest)
+		if strings.HasSuffix(trimmedRest, ".") || strings.HasSuffix(trimmedRest, ":") {
+			return false
+		}
+		// A "title" with no word of at least two letters is equation debris
+		// ("2 S N", "1 (W 2 + W 4"), not a heading.
+		if !hasMultiLetterWord(trimmedRest) {
+			return false
+		}
 	}
 	return !startsWithLowercaseLetter(rest)
+}
+
+// hasMultiLetterWord reports whether any whitespace-delimited word contains at
+// least two letters.
+func hasMultiLetterWord(text string) bool {
+	for field := range strings.FieldsSeq(text) {
+		letters := 0
+		for _, r := range field {
+			if unicode.IsLetter(r) {
+				letters++
+				if letters >= 2 {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func looksLikeRejectedNumericHeading(text string) bool {
@@ -1782,6 +1890,13 @@ func looksLikeRunningHeader(text string, line ParagraphTextLine, size geom.Size)
 		return false
 	}
 	if !mostlyUppercase(text) || hasLowercaseLetter(text) || !hasDigit(text) {
+		return false
+	}
+	// A running header's digits are volume/issue/page furniture ("JOURNAL OF X,
+	// VOL. 12"). When the ONLY digits are a leading section marker ("12. SOME
+	// SECTION TITLE"), this is a numbered section heading that happens to start
+	// the page, not a header.
+	if match := decimalHeadingPrefixPattern.FindStringSubmatch(text); match != nil && !hasDigit(match[2]) {
 		return false
 	}
 	words := wordsForHeading(text)

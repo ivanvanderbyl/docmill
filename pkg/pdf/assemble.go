@@ -63,6 +63,12 @@ func joinLineCellTexts(cells []page.TextCell) string {
 func shouldSeparateLineCells(cells []page.TextCell, index int) bool {
 	current := cells[index]
 	previous := cells[index-1]
+	if cellsStackVertically(previous, current) {
+		// A fraction's numerator/denominator (or a stacked script column)
+		// share an x-span with no vertical overlap: distinct tokens, never a
+		// split word, so the zero horizontal gap must not compact them.
+		return true
+	}
 	if isStandaloneHyphenText(current.Text) && index+1 < len(cells) && shouldCompactStandaloneHyphen(previous, current, cells[index+1]) {
 		return false
 	}
@@ -85,6 +91,20 @@ func shouldSeparateLineCells(cells []page.TextCell, index int) bool {
 		return false
 	}
 	return true
+}
+
+// cellsStackVertically reports whether two same-line cells occupy one column
+// (substantial x-overlap) on separate bands (little to no y-overlap) — the
+// shape of a fraction's numerator over its denominator or a stacked script.
+func cellsStackVertically(a, b page.TextCell) bool {
+	xOverlap := math.Min(a.Box.R, b.Box.R) - math.Max(a.Box.L, b.Box.L)
+	minWidth := math.Min(a.Box.R-a.Box.L, b.Box.R-b.Box.L)
+	if minWidth <= 0 || xOverlap < 0.5*minWidth {
+		return false
+	}
+	yOverlap := math.Min(a.Box.B, b.Box.B) - math.Max(a.Box.T, b.Box.T)
+	minHeight := math.Min(a.Box.Height(), b.Box.Height())
+	return minHeight <= 0 || yOverlap < 0.5*minHeight
 }
 
 func shouldCompactStandaloneHyphen(left, hyphen, right page.TextCell) bool {
@@ -379,7 +399,7 @@ func joinParagraphLineTexts(lines []string) string {
 	for _, line := range lines[1:] {
 		next := strings.TrimSpace(line)
 		if shouldDehyphenateLineJoin(out, next) {
-			out = strings.TrimSuffix(strings.TrimSpace(out), "-") + next
+			out = trimTrailingLineHyphen(strings.TrimSpace(out)) + next
 			continue
 		}
 		out += " " + next
@@ -387,13 +407,44 @@ func joinParagraphLineTexts(lines []string) string {
 	return out
 }
 
+// lineHyphenSuffixes are the line-end hyphen forms a reflow removes: the plain
+// hyphen-minus, its Unicode twin, and the soft hyphen (typeset only at a break
+// by definition).
+//
+// \x02 — the marker the text page substitutes for a line-break hyphen it has
+// judged mid-word (charHyphen) — is deliberately NOT here. That marker fires
+// on the hyphen of a hard compound split across lines ("German-/to-Polish")
+// just as readily as on a soft one, and removing it silently welds the
+// compound shut. collapseSpaces restores it to a visible "-" instead.
+var lineHyphenSuffixes = []string{"-", "‐", "­"}
+
+func trailingLineHyphen(text string) string {
+	for _, suffix := range lineHyphenSuffixes {
+		if strings.HasSuffix(text, suffix) {
+			return suffix
+		}
+	}
+	return ""
+}
+
+func trimTrailingLineHyphen(text string) string {
+	if suffix := trailingLineHyphen(text); suffix != "" {
+		return strings.TrimSuffix(text, suffix)
+	}
+	return text
+}
+
 func shouldDehyphenateLineJoin(left, right string) bool {
 	left = strings.TrimSpace(left)
 	right = strings.TrimSpace(right)
-	if left == "" || right == "" || !strings.HasSuffix(left, "-") {
+	if left == "" || right == "" {
 		return false
 	}
-	leftRunes := []rune(strings.TrimSuffix(left, "-"))
+	suffix := trailingLineHyphen(left)
+	if suffix == "" {
+		return false
+	}
+	leftRunes := []rune(strings.TrimSuffix(left, suffix))
 	rightRunes := []rune(right)
 	if len(leftRunes) == 0 || len(rightRunes) == 0 {
 		return false

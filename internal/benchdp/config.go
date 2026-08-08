@@ -21,6 +21,7 @@ var RequiredToolNames = []string{
 	"opendataloader-hybrid",
 	"liteparse",
 	"pypdf",
+	"pdf-inspector",
 }
 
 type ToolConfigFile struct {

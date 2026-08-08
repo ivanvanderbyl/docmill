@@ -2,10 +2,15 @@
 //
 //	docmill <input.pdf>          convert a PDF to Markdown (native backend)
 //	docmill convert <input.pdf>  same as above, explicit
+//	docmill convert -learned-layout <input.pdf>
+//	                             convert with the learned layout classifier
+//	docmill convert -region-markdown <input.pdf>
+//	                             the learned region stage drives the whole page
 //	docmill forms export <input.pdf>
 //	docmill forms layout <input.pdf>
 //	docmill forms fill <input.pdf> <output.pdf> [values.json]
 //	docmill json                 read a JSON document on stdin, write Markdown
+//	docmill render <input.pdf>   draw every object the page draws as a box, to PNG
 //	docmill benchmark            run the cross-tool DPBench benchmark
 package main
 
@@ -71,6 +76,11 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 			return 1
 		}
 		return 0
+	case "render":
+		if err := runRender(ctx, args[2:], stdout, stderr); err != nil {
+			return 1
+		}
+		return 0
 	case "help", "-h", "--help":
 		usage(stdout, args)
 		return 0
@@ -93,6 +103,9 @@ func usage(w io.Writer, args []string) {
 Commands:
   <input.pdf>          convert a PDF to Markdown (default, native backend)
   convert <input.pdf>  convert a PDF to Markdown
+                       -learned-layout classifies lines with the embedded layout
+                       model (headings, list items, figure innards, formulas)
+                       instead of the hand-tuned detectors
   forms export <input.pdf>
                        write AcroForm field values as JSON
   forms layout <input.pdf>
@@ -100,6 +113,14 @@ Commands:
                        (per page, top-left-origin points, unfilled fields included)
   forms fill <input.pdf> <output.pdf> [values.json]
                        read AcroForm field JSON from a file or stdin and write a filled PDF
+  render <input.pdf>   write one PNG per page outlining every object the
+                       content-stream interpreter says the page draws — text,
+                       paths, images, shadings and form XObjects — each clipped
+                       to what is actually visible
+                       -out dir, -scale n, -pages 1,2, -kinds image,path
+                       -regions draws the learned region stage instead: one
+                       labelled, colour-coded box per detected region
+                       (-json emits the same decomposition as JSON)
   json                 read a JSON document on stdin, write Markdown to stdout
   benchmark            run the cross-tool DPBench benchmark
 `, name)

@@ -7,6 +7,7 @@ package pdf
 import (
 	"context"
 	"fmt"
+	"math"
 	"runtime"
 	"runtime/debug"
 	"sort"
@@ -53,6 +54,13 @@ type formFieldProvider interface {
 	FormFields(ctx context.Context) ([]page.FormField, error)
 }
 
+// drawnObjectProvider reports everything the page draws, each clipped to what
+// is visible. It is optional in the same way rulings are: a backend that cannot
+// supply it still works, and the ink-based proposals simply do not exist.
+type drawnObjectProvider interface {
+	DrawnObjects(ctx context.Context) ([]page.DrawnObject, error)
+}
+
 type ExtractionOptions struct {
 	DetectTables bool
 	ReadingOrder bool
@@ -75,6 +83,51 @@ type ExtractionOptions struct {
 	// legacy line.Text path. ExtractMarkdown leaves it false.
 	EnableInlineFormatting bool
 	TableDetection         doctable.DetectionOptions
+	// ClassifyThenRoute selects the alternate classify-then-route pipeline
+	// (Task 5 of docs/plans/2026-08-06-learned-layout-classifier.md): assemble
+	// every cell into lines first, then route each line to its destination,
+	// instead of carving figures and tables out before lines exist. Every
+	// routing decision is still the existing heuristics' — the flag isolates
+	// refactor risk from model risk so the reroute can be proven neutral on
+	// DPBench before anything learned enters the loop. OFF by default; the
+	// default path is untouched.
+	ClassifyThenRoute bool
+	// LearnedFormulaRouting migrates the Formula class from the heuristics to
+	// the model within the rerouted path (Task 6). A candidate table whose
+	// lines are predominantly Formula is rejected and its cells return to the
+	// prose path. Requires ClassifyThenRoute; OFF by default.
+	LearnedFormulaRouting bool
+	// LearnedRouting hands every line-class decision to the model: headings,
+	// list items and figure innards, on top of the Formula rule. The hand-tuned
+	// detectors for those classes are bypassed, not deleted — deleting them is
+	// the final step, once this measures well on every class. Requires
+	// ClassifyThenRoute; OFF by default.
+	LearnedRouting bool
+	// InkProposals asks the backend for everything the page draws, so region
+	// candidates can be built from ink as well as from assembled text lines.
+	// It costs one extra content-stream walk per page and nothing else: no
+	// decision reads it unless a learned stage is also on.
+	InkProposals bool
+	// SplitColumnLines cuts assembled lines at horizontal gaps that persist
+	// across their neighbours. It changes the LINE SET every later stage sees,
+	// so it is the one option here that is not purely additive.
+	SplitColumnLines bool
+	// LearnedProposals runs the full region stage — propose, classify,
+	// suppress — and exposes the result. It implies InkProposals, because half
+	// the proposal sources are ink.
+	LearnedProposals bool
+	// RegionRouting hands the WHOLE page to the region stage: kept regions
+	// become Markdown according to their class, tables run the grid machinery
+	// only inside model-approved boxes, and picture innards are dropped. The
+	// experimental end state of the plan, behind a flag because the measured
+	// quality (0.55 weighted F1 on DocLayNet regions) does not yet beat the
+	// tuned pipeline; the flag exists to SEE the difference on real documents.
+	RegionRouting bool
+
+	// drawn is the per-page result of that walk. It is unexported because it is
+	// not a caller's choice — the page stage fills it in on the way through,
+	// and a caller setting it by hand would be describing a different page.
+	drawn []page.DrawnObject
 }
 
 const defaultMaxParallelPages = 12
@@ -354,6 +407,7 @@ func extractPage(ctx context.Context, doc Document, index int, options Extractio
 	var rulings []page.RulingSegment
 	var wordCells []page.TextCell
 	var formFields []page.FormField
+	var drawn []page.DrawnObject
 	if provider, ok := pdfPage.(formFieldProvider); ok {
 		formFields, err = runStage(ctx, "form_fields", provider.FormFields)
 		if err != nil {
@@ -374,9 +428,18 @@ func extractPage(ctx context.Context, doc Document, index int, options Extractio
 			}
 		}
 	}
+	if options.InkProposals || options.LearnedProposals || options.RegionRouting {
+		if provider, ok := pdfPage.(drawnObjectProvider); ok {
+			drawn, err = runStage(ctx, "drawn_objects", provider.DrawnObjects)
+			if err != nil {
+				return nil, geom.Size{}, err
+			}
+		}
+	}
 	span.SetAttributes(attribute.Int("text_cells", len(cells)))
 	textCellsPerPage.Record(ctx, int64(len(cells)))
 
+	options.drawn = drawn
 	blocks, err := pageMarkdownBlocks(ctx, cells, wordCells, rulings, formFields, size, options)
 	if err != nil {
 		return nil, geom.Size{}, err
@@ -403,6 +466,12 @@ type markdownBlock struct {
 }
 
 func pageMarkdownBlocks(ctx context.Context, cells []page.TextCell, wordCells []page.TextCell, rulings []page.RulingSegment, formFields []page.FormField, size geom.Size, options ExtractionOptions) ([]markdownBlock, error) {
+	if options.RegionRouting {
+		return pageMarkdownBlocksRegionRouted(ctx, cells, wordCells, rulings, formFields, size, options)
+	}
+	if options.ClassifyThenRoute {
+		return pageMarkdownBlocksRouted(ctx, cells, wordCells, rulings, formFields, size, options)
+	}
 	// Reassign each cell a column-aware reading-order Index, then assemble text
 	// per column so that lines are never merged across a column gutter. When the
 	// detector is not confident the page is multi-column, orderCells is identity
@@ -474,39 +543,12 @@ func pageMarkdownBlocks(ctx context.Context, cells []page.TextCell, wordCells []
 		return blocks, nil
 	}
 
+	// Table detection is shared with the rerouted path (reroute.go) so that
+	// "the reroute changes the ORDER, not the decisions" is enforced by there
+	// being one definition, rather than merely asserted in a comment.
 	detectStart := time.Now()
 	_, detectSpan := tracer.Start(ctx, "pipeline.table_detect")
-	tableProtected := denseIndexLineCellIndexes(cells, size)
-	tableCells, protectedTableCells := splitCellsByIndexSet(cells, tableProtected)
-	detected := doctable.DetectTables(tableCells, rulings, options.TableDetection)
-	remainingCells := detected.TextCells
-	tableOverlapThreshold := normalisedTableOverlapThreshold(options.TableDetection)
-	if len(wordCells) > 0 {
-		anchored := doctable.DetectAnchoredTextTables(tableCells, wordCells, options.TableDetection)
-		if len(anchored.Tables) > 0 {
-			detected.Tables = mergePreferredTables(detected.Tables, anchored.Tables, tableCells)
-			remainingCells = textCellsOutsideTables(tableCells, detected.Tables, tableOverlapThreshold)
-		} else if len(detected.Tables) == 0 {
-			remainingCells = tableCells
-		}
-		detected.Tables = reassignDetectedTableTextFromWords(detected.Tables, wordCells, tableOverlapThreshold)
-	}
-	// Drop zero-validity false positives that survive the borderless+anchored
-	// merge — tables whose validity score is 0 (every content
-	// column is prose: multi-column body text the anchored detector gridded into
-	// a fake table). Their cells return to the paragraph path. The score's
-	// structural credits spare genuine tables that keep a short key/label column;
-	// done after the merge so it does not resurface base-detector fragments.
-	keptTables := detected.Tables[:0]
-	for _, detectedTable := range detected.Tables {
-		if doctable.ValidityScore(detectedTable.Data) <= 0 {
-			remainingCells = append(remainingCells, detectedTable.TextCells...)
-			continue
-		}
-		keptTables = append(keptTables, detectedTable)
-	}
-	detected.Tables = keptTables
-	remainingCells = append(remainingCells, protectedTableCells...)
+	detected, remainingCells := detectPageTables(cells, wordCells, rulings, size, options)
 	detectSpan.SetAttributes(attribute.Int("tables", len(detected.Tables)))
 	detectSpan.End()
 	recordStage(ctx, "table_detect", detectStart)
@@ -798,6 +840,57 @@ func normalisedTableOverlapThreshold(options doctable.DetectionOptions) float64 
 		return options.TextOverlapThreshold
 	}
 	return 0.3
+}
+
+// splitMarginalPageNumberCells removes standalone page-number cells sitting in
+// the page's top/bottom margin from the table-detection input, returning them
+// separately so they flow to the ordinary text path. A table, equation block,
+// or figure reaching the page edge otherwise swallows the page number into a
+// cell mid-content. Three co-signals gate the extraction, so a bare number
+// that is table DATA (a year or count in a margin-band row) is never pulled
+// out:
+//   - position: the cell sits in the page's top/bottom margin band (the same
+//     band splitMarginalPageNumberBlocks uses);
+//   - alone on its line: a number inside a footer sentence is the
+//     trailing-page-number split's job;
+//   - vertically isolated: page furniture is separated from the nearest
+//     content by well over a row pitch, whereas a table row has neighbouring
+//     rows within roughly a line height.
+func splitMarginalPageNumberCells(cells []page.TextCell, size geom.Size) ([]page.TextCell, []page.TextCell) {
+	const lineTolerance = 4.0
+	if size.Height <= 0 || len(cells) == 0 {
+		return cells, nil
+	}
+	remaining := make([]page.TextCell, 0, len(cells))
+	marginal := make([]page.TextCell, 0, 1)
+	for index, cell := range cells {
+		if !isStandalonePageNumber(strings.TrimSpace(cell.Text)) || !isMarginalBlock(markdownBlock{Box: cell.Box}, size) {
+			remaining = append(remaining, cell)
+			continue
+		}
+		isolation := math.Max(2.5*cell.Box.Height(), 18)
+		aloneOnLine := true
+		isolated := true
+		for otherIndex, other := range cells {
+			if otherIndex == index {
+				continue
+			}
+			distance := math.Abs(other.Box.CenterY() - cell.Box.CenterY())
+			if distance <= lineTolerance {
+				aloneOnLine = false
+				break
+			}
+			if distance < isolation {
+				isolated = false
+			}
+		}
+		if !aloneOnLine || !isolated {
+			remaining = append(remaining, cell)
+			continue
+		}
+		marginal = append(marginal, cell)
+	}
+	return remaining, marginal
 }
 
 func splitMarginalPageNumberBlocks(blocks []markdownBlock, size geom.Size) []markdownBlock {

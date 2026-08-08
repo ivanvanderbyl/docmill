@@ -150,12 +150,7 @@ func ReconstructGridWithRows(cells []page.TextCell, tableBox geom.Box, rowBoxes 
 		rowBoxes[i].R = tableBox.R
 	}
 
-	var colBoxes []geom.Box
-	if len(anchor) >= gridMinCols {
-		colBoxes = columnBoxesFromAnchor(anchor, tableBox)
-	} else {
-		colBoxes = reconstructColumns(visible, rowBoxes, tableBox)
-	}
+	colBoxes := deriveColumnBoxes(visible, anchor, tableBox)
 	if len(colBoxes) < gridMinCols {
 		return GridResult{}, nil
 	}
@@ -204,11 +199,9 @@ func ReconstructGridWithAnchor(cells []page.TextCell, tableBox geom.Box, anchor 
 		rowBoxes[i].R = tableBox.R
 	}
 
-	var colBoxes []geom.Box
-	if len(anchor) >= gridMinCols {
+	colBoxes := deriveColumnBoxes(visible, anchor, tableBox)
+	if len(colBoxes) == 0 && len(anchor) >= gridMinCols {
 		colBoxes = anchoredColumnBoxes(anchor, tableBox)
-	} else {
-		colBoxes = reconstructColumns(visible, rowBoxes, tableBox)
 	}
 	if len(colBoxes) < gridMinCols {
 		return GridResult{}, nil
@@ -623,4 +616,19 @@ func gridHasColumnSupport(grid GridResult, minCols int) bool {
 		}
 	}
 	return false
+}
+
+// deriveColumnBoxes picks the column boundaries for a table region: the
+// anchor row when one qualifies, densest-row reconstruction otherwise.
+func deriveColumnBoxes(visible, anchor []page.TextCell, tableBox geom.Box) []geom.Box {
+	// A FinTabNet-trained column model once hung off this decision behind a
+	// flag. It was deleted after DPBench measured it as a net loss (excellent
+	// on financial tables, useless on the mixed corpus, and one document's
+	// TEDS went 1.00 -> 0.00 when it invented columns for a display equation).
+	// docs/LEARNINGS.md records the conditions for resurrecting the idea:
+	// PubTabNet-class training breadth AND a region-acceptance gate in front.
+	if len(anchor) >= gridMinCols {
+		return columnBoxesFromAnchor(anchor, tableBox)
+	}
+	return reconstructColumns(visible, nil, tableBox)
 }

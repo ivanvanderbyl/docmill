@@ -137,13 +137,124 @@ func TestSmokeStrokedPathLine(t *testing.T) {
 	}
 }
 
-func TestFilledPathIsNotExposedAsRulingPath(t *testing.T) {
+func TestFilledPathIsEmittedButNotStroked(t *testing.T) {
+	// This used to assert that a filled path produced no object at all, which
+	// was how "a filled shape is not a ruling" was enforced. The interpreter
+	// now emits filled paths, because a solid rectangle IS ink on the page and
+	// layout analysis needs to see it. The ruling guarantee did not go away, it
+	// moved: it is the IsStroked filter in pkg/parser's RulingSegments, and
+	// TestRulingSegmentsIgnoresFilledPaths covers it there.
 	page := buildTestPage("10 20 m 110 20 l 110 40 l 10 40 l h f")
 	p := LoadPage(page, nil)
 
 	objs := p.Objects()
-	if len(objs) != 0 {
-		t.Fatalf("got %d objects, want 0", len(objs))
+	if len(objs) != 1 {
+		t.Fatalf("got %d objects, want 1", len(objs))
+	}
+	path, ok := objs[0].(*PathObject)
+	if !ok {
+		t.Fatalf("object 0 is %T, want *PathObject", objs[0])
+	}
+	if path.IsStroked() {
+		t.Error("IsStroked = true, want false for `f`")
+	}
+	if !path.IsFilled() {
+		t.Error("IsFilled = false, want true for `f`")
+	}
+	if rect := path.Rect(); rect.Left != 10 || rect.Right != 110 || rect.Bottom != 20 || rect.Top != 40 {
+		t.Errorf("rect = %+v, want left=10 right=110 bottom=20 top=40", rect)
+	}
+}
+
+func TestRectangleAloneOpensAPath(t *testing.T) {
+	// `re` with no preceding `m`. The interpreter only entered its path run on
+	// `m`, so a rectangle-only path was invisible — and `re` alone is how both
+	// filled blocks and clips are almost always written.
+	page := buildTestPage("10 20 100 20 re f")
+	p := LoadPage(page, nil)
+
+	objs := p.Objects()
+	if len(objs) != 1 {
+		t.Fatalf("got %d objects, want 1", len(objs))
+	}
+	path := objs[0].(*PathObject)
+	if rect := path.Rect(); rect.Left != 10 || rect.Right != 110 || rect.Bottom != 20 || rect.Top != 40 {
+		t.Errorf("rect = %+v, want left=10 right=110 bottom=20 top=40", rect)
+	}
+}
+
+func TestClipNarrowsVisibleRect(t *testing.T) {
+	page := buildTestPage("q 0 0 40 40 re W n 0 0 100 100 re f Q")
+	p := LoadPage(page, nil)
+
+	var paths []*PathObject
+	for _, obj := range p.Objects() {
+		if path, ok := obj.(*PathObject); ok {
+			paths = append(paths, path)
+		}
+	}
+	// `n` paints nothing, so the clip rectangle contributes no object; only the
+	// filled square does.
+	if len(paths) != 1 {
+		t.Fatalf("got %d path objects, want 1 (the fill; `n` paints nothing)", len(paths))
+	}
+	square := paths[0]
+	if rect := square.Rect(); rect.Right != 100 || rect.Top != 100 {
+		t.Errorf("authored rect = %+v, want right=100 top=100", rect)
+	}
+	visible, ok := square.VisibleRect()
+	if !ok {
+		t.Fatal("VisibleRect reports nothing visible, want the clipped square")
+	}
+	if visible.Left != 0 || visible.Bottom != 0 || visible.Right != 40 || visible.Top != 40 {
+		t.Errorf("visible rect = %+v, want (0,0)-(40,40)", visible)
+	}
+}
+
+func TestClipIsRestoredByQ(t *testing.T) {
+	// The clip is set inside q/Q, so the square drawn after Q is unclipped.
+	// This is the property that makes ClipPath a value inside GraphicStates.
+	page := buildTestPage("q 0 0 40 40 re W n Q 0 0 100 100 re f")
+	p := LoadPage(page, nil)
+
+	var square *PathObject
+	for _, obj := range p.Objects() {
+		if path, ok := obj.(*PathObject); ok {
+			square = path
+		}
+	}
+	if square == nil {
+		t.Fatal("no path object emitted")
+	}
+	visible, ok := square.VisibleRect()
+	if !ok {
+		t.Fatal("VisibleRect reports nothing visible")
+	}
+	if visible.Right != 100 || visible.Top != 100 {
+		t.Errorf("visible rect = %+v, want the full (0,0)-(100,100) after Q restored the clip", visible)
+	}
+}
+
+func TestInlineImageIsEmitted(t *testing.T) {
+	page := buildTestPage("q 200 0 0 100 50 60 cm BI /W 8 /H 8 /CS /G /BPC 8 ID 12345678 EI Q")
+	p := LoadPage(page, nil)
+
+	var image *ImageObject
+	for _, obj := range p.Objects() {
+		if img, ok := obj.(*ImageObject); ok {
+			image = img
+		}
+	}
+	if image == nil {
+		t.Fatal("no image object emitted for an inline image")
+	}
+	if !image.IsInline() {
+		t.Error("IsInline = false, want true")
+	}
+	// The cm maps the unit square to 200x100 at (50,60).
+	rect := image.Rect()
+	if rect.Left != 50 || rect.Bottom != 60 || rect.Right != 250 || rect.Top != 160 {
+		t.Errorf("rect = %+v, want (50,60)-(250,160)", rect)
 	}
 }
 

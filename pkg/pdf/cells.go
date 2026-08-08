@@ -29,27 +29,51 @@ func (o MergeOptions) withDefaults() MergeOptions {
 	return o
 }
 
-// MergeFragmentedCells de-fragments raw PDF text cells into line-level cells,
-// mirroring Docling's merge_horizontal_cells (pypdfium2 backend). PDFium emits
-// many sub-word rects in some documents; this groups them into rows by vertical
-// proximity and merges horizontally-adjacent rects within a row into a single
-// cell.
-//
-// Cells are processed in their incoming (reading) order. reextract, if non-nil,
-// returns the text for a merged cell's box (top-left origin) — pass the backend's
-// bounded-text lookup so spacing matches the document, exactly as Docling
-// re-reads the merged region. When reextract is nil or returns empty, the member
-// cells' texts are joined with a single space. Returned cells are re-indexed
-// 0..n-1 in order.
-func MergeFragmentedCells(cells []page.TextCell, reextract func(geom.Box) string, options MergeOptions) []page.TextCell {
+// MergeFragmentedCellsExclusive de-fragments raw PDF text cells into
+// line-level cells, mirroring Docling's merge_horizontal_cells (pypdfium2
+// backend): cells are grouped into rows by vertical proximity and
+// horizontally-adjacent cells within a row merge into one cell. Every merged
+// group is then re-read in ONE batched call: reextractAll receives every
+// group's enclosing box (top-left origin, in processing order) and returns
+// one text per box. Handing the extractor the complete set of boxes lets it
+// partition the page's characters by best overlap instead of
+// first-query-wins — a tall math delimiter's box that merely grazes glyphs
+// of a neighbouring prose line cannot steal them from that line's own query,
+// and a glyph straddling two regions (big-operator limits, sub/superscripts
+// crossing line rects) is still emitted exactly once. The extractor is
+// authoritative: a group whose text comes back empty was claimed by
+// better-overlapping groups and is dropped. Returned cells are re-indexed
+// 0..n-1.
+func MergeFragmentedCellsExclusive(cells []page.TextCell, reextractAll func([]geom.Box) []string, options MergeOptions) []page.TextCell {
 	options = options.withDefaults()
 	if len(cells) == 0 {
 		return nil
 	}
 
-	merged := make([]page.TextCell, 0, len(cells))
+	var groups [][]page.TextCell
 	for _, row := range groupCellRows(cells, options.VerticalThresholdFactor) {
-		merged = append(merged, mergeCellRow(row, options.HorizontalThresholdFactor, reextract)...)
+		groups = append(groups, splitCellRowGroups(row, options.HorizontalThresholdFactor)...)
+	}
+
+	shells := make([]page.TextCell, len(groups))
+	boxes := make([]geom.Box, len(groups))
+	for i, group := range groups {
+		shells[i] = mergeCellShell(group)
+		boxes[i] = shells[i].Box
+	}
+
+	texts := reextractAll(boxes)
+	merged := make([]page.TextCell, 0, len(groups))
+	for i, shell := range shells {
+		text := ""
+		if i < len(texts) {
+			text = strings.TrimSpace(texts[i])
+		}
+		if text == "" {
+			continue
+		}
+		shell.Text = text
+		merged = append(merged, shell)
 	}
 	for index := range merged {
 		merged[index].Index = index
@@ -81,8 +105,11 @@ func groupCellRows(cells []page.TextCell, verticalFactor float64) [][]page.TextC
 	return rows
 }
 
-func mergeCellRow(row []page.TextCell, horizontalFactor float64, reextract func(geom.Box) string) []page.TextCell {
-	merged := make([]page.TextCell, 0, len(row))
+// splitCellRowGroups splits a vertical row into horizontally-contiguous merge
+// groups: adjacent cells stay in one group while the gap between them is at
+// most horizontalFactor times their average height.
+func splitCellRowGroups(row []page.TextCell, horizontalFactor float64) [][]page.TextCell {
+	groups := make([][]page.TextCell, 0, 1)
 	group := []page.TextCell{row[0]}
 
 	for _, cell := range row[1:] {
@@ -92,20 +119,62 @@ func mergeCellRow(row []page.TextCell, horizontalFactor float64, reextract func(
 			group = append(group, cell)
 			continue
 		}
-		merged = append(merged, mergeCellGroup(group, reextract))
+		groups = append(groups, group)
 		group = []page.TextCell{cell}
 	}
-	merged = append(merged, mergeCellGroup(group, reextract))
-	return merged
+	return append(groups, group)
 }
 
-func mergeCellGroup(group []page.TextCell, reextract func(geom.Box) string) page.TextCell {
+// leadingFragmentFontSize returns the size of a merge group's first fragment
+// that declares a credible one (see credibleCellFontSize), falling back to the
+// group's largest declared size when none is credible — which is what the merge
+// reported before.
+//
+// Invariant encoded: a sub-word fragment run opens at the size the document set
+// the run in. Reading order gives the answer directly, so no statistics are
+// needed and the result is always a size that genuinely occurs in the group.
+func leadingFragmentFontSize(group []page.TextCell) float64 {
+	maxSize := 0.0
+	for _, cell := range group {
+		if cell.FontSize > maxSize {
+			maxSize = cell.FontSize
+		}
+	}
+	for _, cell := range group {
+		if isListSpacerText(strings.TrimSpace(cell.Text)) || !credibleCellFontSize(cell) {
+			continue
+		}
+		return cell.FontSize
+	}
+	return maxSize
+}
+
+// mergeCellShell unions a group's geometry and font metadata into one cell,
+// leaving Text as the first member's (callers overwrite it).
+func mergeCellShell(group []page.TextCell) page.TextCell {
 	if len(group) == 1 {
 		return group[0]
 	}
 
 	box := group[0].Box
-	fontSize := group[0].FontSize
+	// Font size follows the same rule as the rest of the font metadata below:
+	// the LEADING fragment's, not the group's maximum. A merge group is a run of
+	// sub-word fragments that a document sets in one nominal size; where the
+	// declared sizes differ inside it, the run opens at its nominal size and the
+	// deviations are decoration. Under a maximum, one oversized glyph absorbed
+	// into a run — a summation, an integral, a radical, a stretched bracket —
+	// made the whole merged cell claim that glyph's size, so a dozen body-sized
+	// characters were reported as title-sized and every size test downstream
+	// (heading prominence, body-font estimation, figure-label suppression) read
+	// the run as prominent.
+	//
+	// The leading fragment is the right representative rather than the dominant
+	// (majority) size because a small-caps run is a counter-example to majority:
+	// its capitals carry the nominal size and its small capitals — set ~0.8x and
+	// the majority of the characters — do not. Taking the opening fragment reads
+	// a small-caps section title at its true size AND an absorbed math delimiter
+	// at the run's body size.
+	fontSize := leadingFragmentFontSize(group)
 	// Font info: take the first cell's font as the representative. Cells in a
 	// merge group are sub-word fragments on the same baseline; they share a
 	// font in virtually all born-digital PDFs. If a group spans a font
@@ -123,27 +192,12 @@ func mergeCellGroup(group []page.TextCell, reextract func(geom.Box) string) page
 		box.T = math.Min(box.T, cell.Box.T)
 		box.R = math.Max(box.R, cell.Box.R)
 		box.B = math.Max(box.B, cell.Box.B)
-		fontSize = math.Max(fontSize, cell.FontSize)
 	}
 	box.Origin = geom.TopLeft
 
-	text := ""
-	if reextract != nil {
-		text = strings.TrimSpace(reextract(box))
-	}
-	if text == "" {
-		parts := make([]string, 0, len(group))
-		for _, cell := range group {
-			if trimmed := strings.TrimSpace(cell.Text); trimmed != "" {
-				parts = append(parts, trimmed)
-			}
-		}
-		text = strings.Join(parts, " ")
-	}
-
 	return page.TextCell{
 		Index:      group[0].Index,
-		Text:       text,
+		Text:       group[0].Text,
 		FontSize:   fontSize,
 		FontName:   fontName,
 		FontWeight: fontWeight,

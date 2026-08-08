@@ -17,17 +17,38 @@ func Table(data table.Data) (string, error) {
 		return "", nil
 	}
 
+	// Markdown has no rowspan/colspan, so a cell spanning several grid slots
+	// must contribute its text exactly once, at its anchor (StartRow, StartCol).
+	// Grid() places the same cell in every covered slot; rendering each slot's
+	// text verbatim would fabricate duplicate rows/columns for spanned cells.
 	grid := data.Grid()
+	slotText := func(row, col int) string {
+		cell := grid[row][col]
+		if cell.StartRow != row || cell.StartCol != col {
+			return ""
+		}
+		return normaliseCellText(cell.Text)
+	}
+
 	header := make([]string, data.NumCols)
 	for col := 0; col < data.NumCols; col++ {
-		header[col] = normaliseCellText(grid[0][col].Text)
+		header[col] = slotText(0, col)
 	}
 
 	rows := make([][]string, 0, data.NumRows-1)
 	for row := 1; row < data.NumRows; row++ {
 		renderedRow := make([]string, data.NumCols)
+		empty := true
 		for col := 0; col < data.NumCols; col++ {
-			renderedRow[col] = normaliseCellText(grid[row][col].Text)
+			renderedRow[col] = slotText(row, col)
+			if renderedRow[col] != "" {
+				empty = false
+			}
+		}
+		// A row whose every slot is empty (typically the continuation rows of
+		// spanned cells) carries no information in Markdown; drop it.
+		if empty {
+			continue
 		}
 		rows = append(rows, renderedRow)
 	}
