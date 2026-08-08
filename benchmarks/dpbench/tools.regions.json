@@ -1,0 +1,6 @@
+{
+  "tools": [
+    { "name": "docmill", "command": ["bin/docmill-bench", "convert", "{{input}}"], "output_mode": "stdout", "timeout_seconds": 120 },
+    { "name": "docmill-regions", "command": ["bin/docmill-bench", "convert", "-region-markdown", "{{input}}"], "output_mode": "stdout", "timeout_seconds": 120 }
+  ]
+}

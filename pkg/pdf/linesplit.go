@@ -47,7 +47,7 @@ const (
 
 	// splitDecisiveGapRatio is the gap width, in font sizes, above which a gap
 	// needs no corroboration from its neighbours.
-	splitDecisiveGapRatio = 6.0
+	splitDecisiveGapRatio = 4.0
 
 	// splitMinSideWidth keeps a split from shaving a single character off an
 	// end. A fragment narrower than this is punctuation, not a column.
