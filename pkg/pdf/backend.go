@@ -103,15 +103,6 @@ type ExtractionOptions struct {
 	// the final step, once this measures well on every class. Requires
 	// ClassifyThenRoute; OFF by default.
 	LearnedRouting bool
-	// LearnedColumns derives table column boundaries with the FinTabNet-trained
-	// model instead of the densest-row heuristic. Independent of the line
-	// model: it changes table STRUCTURE, which is what TEDS scores, rather than
-	// which regions are tables. OFF by default.
-	LearnedColumns bool
-	// LearnedRegions gates the structural classes with the REGION model: a run
-	// of same-label lines only stands if the second stage accepts it. Requires
-	// LearnedRouting; OFF by default.
-	LearnedRegions bool
 	// InkProposals asks the backend for everything the page draws, so region
 	// candidates can be built from ink as well as from assembled text lines.
 	// It costs one extra content-stream walk per page and nothing else: no

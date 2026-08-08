@@ -79,7 +79,7 @@ func TestRunConvertAcceptsLearnedLayoutFlagBeforePath(t *testing.T) {
 func TestConvertOptionsDefaultMatchesExtractMarkdown(t *testing.T) {
 	t.Parallel()
 
-	options := convertOptions(false, false, false, false)
+	options := convertOptions(false, false)
 
 	require.True(t, options.DetectTables)
 	require.True(t, options.ReadingOrder)
@@ -94,7 +94,7 @@ func TestConvertOptionsDefaultMatchesExtractMarkdown(t *testing.T) {
 func TestConvertOptionsLearnedLayoutEnablesTheWholeLearnedPath(t *testing.T) {
 	t.Parallel()
 
-	options := convertOptions(true, false, false, false)
+	options := convertOptions(true, false)
 
 	// LearnedRouting is only consulted on the rerouted path, and the Formula
 	// veto is a separate gate — the flag has to set all three or it silently
@@ -136,34 +136,4 @@ func TestRunConvertExtractsMarkdownFromFixture(t *testing.T) {
 
 	require.Empty(t, stderr.String())
 	require.Contains(t, stdout.String(), "코로나-19")
-}
-
-func TestConvertOptionsLearnedColumnsIsIndependent(t *testing.T) {
-	// -learned-columns changes table STRUCTURE, -learned-layout changes which
-	// regions are what. They must be selectable separately or their effects
-	// cannot be measured apart — TEDS moves for one, the class metrics for the
-	// other.
-	columnsOnly := convertOptions(false, true, false, false)
-	require.True(t, columnsOnly.LearnedColumns)
-	require.True(t, columnsOnly.ClassifyThenRoute, "learned columns need the rerouted path for rulings")
-	require.False(t, columnsOnly.LearnedRouting)
-
-	layoutOnly := convertOptions(true, false, false, false)
-	require.True(t, layoutOnly.LearnedRouting)
-	require.False(t, layoutOnly.LearnedColumns)
-
-	require.False(t, convertOptions(false, false, false, false).ClassifyThenRoute, "default path must stay untouched")
-}
-
-func TestConvertOptionsLearnedRegionsImpliesLearnedLayout(t *testing.T) {
-	// The region gate decides which candidate regions stand, and the candidates
-	// come from the line model. Enabling it without the line model would gate
-	// nothing.
-	options := convertOptions(false, false, true, false)
-	require.True(t, options.LearnedRegions)
-	require.True(t, options.LearnedRouting)
-	require.True(t, options.ClassifyThenRoute)
-
-	require.False(t, convertOptions(true, false, false, false).LearnedRegions,
-		"-learned-layout alone must not enable the region gate")
 }

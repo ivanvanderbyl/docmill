@@ -18,12 +18,8 @@ func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	flags.SetOutput(stderr)
 	learnedLayout := flags.Bool("learned-layout", false,
 		"classify lines with the embedded layout model instead of the hand-tuned detectors (headings, list items, figure innards, formulas)")
-	learnedRegions := flags.Bool("learned-regions", false,
-		"gate structural regions with the region model (requires -learned-layout)")
 	regionMarkdown := flags.Bool("region-markdown", false,
 		"let the learned region stage drive the whole page: regions become Markdown by class (experimental)")
-	learnedColumns := flags.Bool("learned-columns", false,
-		"derive table column boundaries with the FinTabNet-trained model instead of the densest-row heuristic")
 	// No stripArgSeparator here: "--" is the flag package's own end-of-flags
 	// terminator, so parsing directly keeps `convert -- <path>` working and also
 	// lets a path that begins with "-" through.
@@ -33,7 +29,7 @@ func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) er
 
 	rest := flags.Args()
 	if len(rest) != 1 {
-		err := fmt.Errorf("usage: docmill [convert] [-learned-layout] [-learned-regions] [-learned-columns] [-region-markdown] <input.pdf>")
+		err := fmt.Errorf("usage: docmill [convert] [-learned-layout] [-region-markdown] <input.pdf>")
 		_, _ = fmt.Fprintln(stderr, err)
 		return err
 	}
@@ -58,7 +54,7 @@ func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	}
 	defer doc.Close()
 
-	markdown, err := docpdf.ExtractMarkdownWithOptions(ctx, doc, convertOptions(*learnedLayout, *learnedColumns, *learnedRegions, *regionMarkdown))
+	markdown, err := docpdf.ExtractMarkdownWithOptions(ctx, doc, convertOptions(*learnedLayout, *regionMarkdown))
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "extract Markdown: %v\n", err)
 		return err
@@ -73,7 +69,7 @@ func runConvert(ctx context.Context, args []string, stdout, stderr io.Writer) er
 //
 // Without the flag the options are exactly ExtractMarkdown's, so the default
 // conversion stays byte-identical to what it produces today.
-func convertOptions(learnedLayout, learnedColumns, learnedRegions, regionMarkdown bool) docpdf.ExtractionOptions {
+func convertOptions(learnedLayout, regionMarkdown bool) docpdf.ExtractionOptions {
 	options := docpdf.ExtractionOptions{
 		DetectTables:    true,
 		ReadingOrder:    true,
@@ -90,22 +86,6 @@ func convertOptions(learnedLayout, learnedColumns, learnedRegions, regionMarkdow
 		options.ClassifyThenRoute = true
 		options.LearnedRouting = true
 		options.LearnedFormulaRouting = true
-	}
-	if learnedRegions {
-		// The gate only means something when the line model is proposing the
-		// candidates, so it implies -learned-layout rather than standing alone.
-		options.ClassifyThenRoute = true
-		options.LearnedRouting = true
-		options.LearnedFormulaRouting = true
-		options.LearnedRegions = true
-	}
-	if learnedColumns {
-		// Independent of -learned-layout: this changes table STRUCTURE (what
-		// TEDS scores) rather than which regions are tables, so the two are
-		// measurable separately. It still needs the rerouted path, which is
-		// where the rulings reach the detector.
-		options.ClassifyThenRoute = true
-		options.LearnedColumns = true
 	}
 	if regionMarkdown {
 		// The region stage owns the page outright. It builds its own line

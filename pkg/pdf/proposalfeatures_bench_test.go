@@ -2,7 +2,6 @@ package pdf
 
 import (
 	"fmt"
-	doctable "github.com/ivanvanderbyl/docmill/v2/pkg/table"
 	"testing"
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/geom"
@@ -60,17 +59,5 @@ func BenchmarkProposalFeaturesSingle(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		ProposalFeatures(proposal, in)
-	}
-}
-
-// BenchmarkColumnGapCandidates isolates the suspected cost. ProposalFeatures
-// calls it once per candidate, so its per-call cost is multiplied by the
-// proposal count before it reaches a page.
-func BenchmarkColumnGapCandidates(b *testing.B) {
-	in := benchmarkPage(60, 8)
-	box := geom.Box{L: 60, T: 60, R: 550, B: 720, Origin: geom.TopLeft}
-	b.ResetTimer()
-	for range b.N {
-		doctable.ColumnGapCandidates(in.Cells, in.Rulings, box)
 	}
 }

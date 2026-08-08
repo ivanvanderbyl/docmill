@@ -13,7 +13,8 @@ import (
 //
 // What the model takes over here:
 //
-//	Section-header, Title  -> heading  (replaces isHeadingLine)
+//	Section-header, Title  -> heading  (REVERTED to the heuristic: MHS 0.63
+//	                          vs 0.77 on DPBench; see reroute.go)
 //	List-item              -> list     (replaces isListBlockCandidate)
 //	Picture                -> dropped from prose (replaces the figure-label filter)
 //	Formula                -> never a table cell (already migrated)
@@ -50,57 +51,6 @@ type lineLabeller struct {
 	lines  []ParagraphTextLine
 	labels []string
 	ok     bool
-
-	// gated holds the candidate regions the REGION model accepted, by class.
-	// Nil until gateRegions runs; an empty slice means every candidate of that
-	// class was rejected.
-	gated map[string][]geom.Box
-}
-
-// gateRegions groups the labelled lines into candidate regions and asks the
-// REGION model which stand. Only the classes named are gated; everything else
-// keeps its line labels untouched.
-//
-// This is the cascade's second stage. A rejected candidate costs nothing beyond
-// the region: its lines fall back to their own labels, which is what they had
-// before the region existed.
-func (l *lineLabeller) gateRegions(cells []page.TextCell, rulings []page.RulingSegment, size geom.Size, classes ...string) {
-	if !l.ok {
-		return
-	}
-	l.gated = map[string][]geom.Box{}
-	wanted := map[string]bool{}
-	for _, class := range classes {
-		wanted[class] = true
-		l.gated[class] = nil
-	}
-	for _, region := range GroupLineRegions(l.lines, l.labels) {
-		if !wanted[region.Class] {
-			continue
-		}
-		if acceptRegion(RegionFeatures(region, l.lines, l.labels, cells, rulings, size)) {
-			l.gated[region.Class] = append(l.gated[region.Class], region.Box)
-		}
-	}
-}
-
-// inAcceptedRegion reports whether box lies inside a candidate of this class
-// that the region model accepted. When the class was never gated it reports
-// true, so ungated classes behave exactly as before.
-func (l *lineLabeller) inAcceptedRegion(box geom.Box, class string) bool {
-	if l.gated == nil {
-		return true
-	}
-	accepted, gated := l.gated[class]
-	if !gated {
-		return true
-	}
-	for _, region := range accepted {
-		if lineContainment(box, region) >= 0.5 {
-			return true
-		}
-	}
-	return false
 }
 
 func newLineLabeller(lines []ParagraphTextLine, cells []page.TextCell, size geom.Size, rulings []page.RulingSegment) *lineLabeller {
@@ -220,8 +170,7 @@ func dropPictureBlocks(blocks []markdownBlock, labeller *lineLabeller) []markdow
 		// are correct only 5.7% of the time on their own, so the gate is doing
 		// most of the work here.
 		if block.tableData == nil &&
-			labeller.isClass(block.Box, layoutClassPicture) &&
-			labeller.inAcceptedRegion(block.Box, layoutClassPicture) {
+			labeller.isClass(block.Box, layoutClassPicture) {
 			continue
 		}
 		out = append(out, block)

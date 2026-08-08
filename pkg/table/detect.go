@@ -19,12 +19,6 @@ type DetectionOptions struct {
 	ColumnTolerance      float64
 	TextOverlapThreshold float64
 	MaxRowFillRatio      float64
-	// LearnedColumns derives column boundaries with the model trained on
-	// FinTabNet instead of the densest-row heuristic. It falls back to the
-	// heuristic whenever the model accepts too few boundaries, so a table is
-	// never lost — a wrong grid is bad, no table at all is worse. OFF by
-	// default.
-	LearnedColumns bool
 	// ColumnRulings are the page's ruling segments, used as boundary evidence
 	// by the learned path. Optional.
 	ColumnRulings []page.RulingSegment

@@ -618,93 +618,17 @@ func gridHasColumnSupport(grid GridResult, minCols int) bool {
 	return false
 }
 
-// columnDerivation carries the learned-column switch into the grid builders,
-// which are called from several places with no options argument.
-//
-// A package-level switch rather than a threaded parameter because the grid
-// builders are exported API used by callers that have no opinion on this, and
-// widening their signatures would push the choice onto every one of them. It is
-// set once per detection run.
-var columnDerivation struct {
-	learned bool
-	rulings []page.RulingSegment
-}
-
-// SetColumnDerivation selects the column derivation for subsequent detection
-// and returns a function restoring the previous setting.
-func SetColumnDerivation(learned bool, rulings []page.RulingSegment) func() {
-	previous := columnDerivation
-	columnDerivation.learned = learned
-	columnDerivation.rulings = rulings
-	return func() { columnDerivation = previous }
-}
-
-// deriveColumnBoxes picks the column boundaries for a table region.
-//
-// The learned model goes FIRST when enabled, ahead of the anchor row. That
-// ordering was wrong in the first cut and the benchmark caught it: the anchor
-// is densestLayoutRow, which is the very "widest row has one cell per column"
-// assumption the model exists to replace. Deferring to it meant the model never
-// ran on any of DPBench's 67 tables.
-//
-// The anchor and the densest-row reconstruction remain as fallbacks, because a
-// model that declines to split must not cost us the table. A wrong grid is bad;
-// no table at all is worse.
+// deriveColumnBoxes picks the column boundaries for a table region: the
+// anchor row when one qualifies, densest-row reconstruction otherwise.
 func deriveColumnBoxes(visible, anchor []page.TextCell, tableBox geom.Box) []geom.Box {
-	// The heuristic decides first WHETHER this region has a column structure at
-	// all; the model then decides only WHERE the boundaries go.
-	//
-	// That separation is load-bearing and DPBench found it the hard way. Letting
-	// the model supply columns for a region the heuristic had rejected turned a
-	// display equation sitting beside body text into a 4-column table, taking
-	// that document's TEDS from 1.00 to 0.00 — reintroducing the very fake-table
-	// defect this project exists to remove. The column model is trained on
-	// regions that ARE tables and has never been asked "is this one?", so it has
-	// no business answering that question.
-	var fallback []geom.Box
+	// A FinTabNet-trained column model once hung off this decision behind a
+	// flag. It was deleted after DPBench measured it as a net loss (excellent
+	// on financial tables, useless on the mixed corpus, and one document's
+	// TEDS went 1.00 -> 0.00 when it invented columns for a display equation).
+	// docs/LEARNINGS.md records the conditions for resurrecting the idea:
+	// PubTabNet-class training breadth AND a region-acceptance gate in front.
 	if len(anchor) >= gridMinCols {
-		fallback = columnBoxesFromAnchor(anchor, tableBox)
-	} else {
-		fallback = reconstructColumns(visible, nil, tableBox)
+		return columnBoxesFromAnchor(anchor, tableBox)
 	}
-	if len(fallback) < gridMinCols {
-		columnDerivationCounts.heuristic++
-		return fallback
-	}
-
-	if columnDerivation.learned {
-		if boxes := learnedColumnBoxes(visible, columnDerivation.rulings, tableBox); len(boxes) >= gridMinCols {
-			columnDerivationCounts.learned++
-			return boxes
-		}
-		columnDerivationCounts.learnedDeclined++
-	}
-	if len(anchor) >= gridMinCols {
-		columnDerivationCounts.anchor++
-	} else {
-		columnDerivationCounts.heuristic++
-	}
-	return fallback
-}
-
-// columnDerivationCounts records which branch produced each table's columns.
-// A benchmark that shows no change cannot distinguish "the model ran and agreed"
-// from "the model never ran"; this makes that difference observable.
-var columnDerivationCounts struct {
-	anchor          int
-	learned         int
-	learnedDeclined int
-	heuristic       int
-}
-
-// ColumnDerivationCounts returns and clears the branch tally.
-func ColumnDerivationCounts() (anchor, learned, learnedDeclined, heuristic int) {
-	c := columnDerivationCounts
-	columnDerivationCounts = struct {
-		anchor          int
-		learned         int
-		learnedDeclined int
-		heuristic       int
-	}{}
-	return c.anchor, c.learned, c.learnedDeclined, c.heuristic
+	return reconstructColumns(visible, nil, tableBox)
 }

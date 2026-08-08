@@ -331,3 +331,60 @@ func dedupeProposals(proposals []RegionProposal) []RegionProposal {
 	}
 	return out
 }
+
+// Shared numeric and box helpers, moved here when regions.go (the superseded
+// same-label region gate) was deleted. Every remaining consumer is on the
+// proposal path.
+
+func unionBoxes(a, b geom.Box) geom.Box {
+	return geom.Box{
+		L:      math.Min(a.L, b.L),
+		R:      math.Max(a.R, b.R),
+		T:      math.Min(topEdgeOf(a), topEdgeOf(b)),
+		B:      math.Max(bottomEdgeOf(a), bottomEdgeOf(b)),
+		Origin: geom.TopLeft,
+	}
+}
+
+// stability is 1 - (stddev / mean), clamped to [0, 1]: 1 when every value is
+// identical, 0 when they scatter as much as their own size. A table's rows have
+// stable cell counts and heights; stacked prose does not.
+func stability(values []float64) float64 {
+	if len(values) < 2 {
+		return 1
+	}
+	mean := meanOf(values)
+	if mean == 0 {
+		return 1
+	}
+	return math.Max(0, math.Min(1, 1-standardDeviation(values)/mean))
+}
+
+func meanOf(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sum := 0.0
+	for _, v := range values {
+		sum += v
+	}
+	return sum / float64(len(values))
+}
+
+func maxOf(values []float64) float64 {
+	best := 0.0
+	for _, v := range values {
+		if v > best {
+			best = v
+		}
+	}
+	return best
+}
+
+func varianceOf(values []float64) float64 {
+	if len(values) < 2 {
+		return 0
+	}
+	sd := standardDeviation(values)
+	return sd * sd
+}

@@ -84,13 +84,6 @@ func pageMarkdownBlocksRouted(ctx context.Context, cells []page.TextCell, wordCe
 	if options.LearnedRouting {
 		_, finishStage := startStage(ctx, "layout_classify")
 		labeller = newLineLabeller(allLines, cells, size, rulings)
-		if options.LearnedRegions && labeller.ok {
-			gapCells := wordCells
-			if len(gapCells) == 0 {
-				gapCells = cells
-			}
-			labeller.gateRegions(gapCells, rulings, size, layoutClassPicture)
-		}
 		finishStage(nil)
 	}
 
@@ -106,11 +99,15 @@ func pageMarkdownBlocksRouted(ctx context.Context, cells []page.TextCell, wordCe
 			protected = mergeProtectedCellIndexes(protected, protectedListLineCellIndexes(cells))
 		}
 		protected = mergeProtectedCellIndexes(protected, denseIndexLineCellIndexes(cells, size))
-		var decide headingDecider
-		if labeller != nil && labeller.ok {
-			decide = labeller.isHeading
-		}
-		headingBlocks, remaining = splitHeadingCellsWith(cells, size, protected, decide)
+		// Headings stay with the HEURISTIC decider even when LearnedRouting is
+		// on. The line model owned them for a while, and DPBench measured the
+		// product cost: MHS 0.63 against the heuristic's 0.77, with 39
+		// documents worse and 17 better. Per the plan's own rule — a class the
+		// model loses stays with the heuristic, recorded — headings reverted.
+		// The model keeps the classes it wins here: lists, figure innards and
+		// the Formula veto. (The region-routed path reaches heading parity a
+		// different way: the union of both detectors with output guards.)
+		headingBlocks, remaining = splitHeadingCellsWith(cells, size, protected, nil)
 		finishStage(nil)
 	}
 
@@ -200,9 +197,6 @@ func pageMarkdownBlocksRouted(ctx context.Context, cells []page.TextCell, wordCe
 // so both paths share one definition. Extracting it is what makes "the reroute
 // changes the ORDER, not the decisions" checkable rather than merely claimed.
 func detectPageTables(cells []page.TextCell, wordCells []page.TextCell, rulings []page.RulingSegment, size geom.Size, options ExtractionOptions) (doctable.DetectionResult, []page.TextCell) {
-	if options.LearnedColumns {
-		defer doctable.SetColumnDerivation(true, rulings)()
-	}
 	tableProtected := denseIndexLineCellIndexes(cells, size)
 	tableCells, protectedTableCells := splitCellsByIndexSet(cells, tableProtected)
 	detected := doctable.DetectTables(tableCells, rulings, options.TableDetection)

@@ -4,6 +4,8 @@
 //	docmill convert <input.pdf>  same as above, explicit
 //	docmill convert -learned-layout <input.pdf>
 //	                             convert with the learned layout classifier
+//	docmill convert -region-markdown <input.pdf>
+//	                             the learned region stage drives the whole page
 //	docmill forms export <input.pdf>
 //	docmill forms layout <input.pdf>
 //	docmill forms fill <input.pdf> <output.pdf> [values.json]
