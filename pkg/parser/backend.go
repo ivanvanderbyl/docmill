@@ -141,7 +141,7 @@ func (p *Page) Size(ctx context.Context) (geom.Size, error) {
 
 // TextCells extracts the page's text rects, mirroring PDFium: build
 // the textpage, segment into rects, convert to top-left cells, then merge
-// fragmented rects (re-reading each merged region's text). Rects from the native
+// fragmented rects (re-reading merged regions' text in one batched pass). Rects from the native
 // textpage are in PDF user space (y-up), the same convention TextRectsToCells
 // expects.
 func (p *Page) TextCells(ctx context.Context) ([]docpage.TextCell, error) {
@@ -180,11 +180,18 @@ func (p *Page) TextCells(ctx context.Context) ([]docpage.TextCell, error) {
 	}
 	cells := docpdf.TextRectsToCells(textRects, size.Height)
 
-	reextract := func(box geom.Box) string {
-		bounds := docpdf.TopLeftBoxToPDFiumBounds(box, size.Height)
-		return tp.GetTextByRect(crt.NewFloatRect(
-			float32(bounds.Left), float32(bounds.Bottom),
-			float32(bounds.Right), float32(bounds.Top)))
+	// Batched: one banded pass over the char stream covers every merged box,
+	// instead of a full GetTextByRect scan per merged group (quadratic on
+	// heavily fragmented pages).
+	reextract := func(boxes []geom.Box) []string {
+		merged := make([]crt.FloatRect, len(boxes))
+		for i, box := range boxes {
+			bounds := docpdf.TopLeftBoxToPDFiumBounds(box, size.Height)
+			merged[i] = crt.NewFloatRect(
+				float32(bounds.Left), float32(bounds.Bottom),
+				float32(bounds.Right), float32(bounds.Top))
+		}
+		return tp.GetTextByRects(merged)
 	}
 	cells = docpdf.MergeFragmentedCells(cells, reextract, docpdf.MergeOptions{})
 	return cells, nil

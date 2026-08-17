@@ -36,21 +36,49 @@ func (o MergeOptions) withDefaults() MergeOptions {
 // cell.
 //
 // Cells are processed in their incoming (reading) order. reextract, if non-nil,
-// returns the text for a merged cell's box (top-left origin) — pass the backend's
-// bounded-text lookup so spacing matches the document, exactly as Docling
-// re-reads the merged region. When reextract is nil or returns empty, the member
-// cells' texts are joined with a single space. Returned cells are re-indexed
-// 0..n-1 in order.
-func MergeFragmentedCells(cells []page.TextCell, reextract func(geom.Box) string, options MergeOptions) []page.TextCell {
+// is called once with every merged cell's box (top-left origin) and returns one
+// text per box, in order — pass the backend's bounded-text lookup so spacing
+// matches the document, exactly as Docling re-reads the merged region. The
+// single batched call keeps the re-read cost independent of how many groups a
+// fragmented page produces. When reextract is nil or returns empty for a box,
+// that group's member texts are joined with a single space. Returned cells are
+// re-indexed 0..n-1 in order.
+func MergeFragmentedCells(cells []page.TextCell, reextract func([]geom.Box) []string, options MergeOptions) []page.TextCell {
 	options = options.withDefaults()
 	if len(cells) == 0 {
 		return nil
 	}
 
-	merged := make([]page.TextCell, 0, len(cells))
+	groups := make([][]page.TextCell, 0, len(cells))
 	for _, row := range groupCellRows(cells, options.VerticalThresholdFactor) {
-		merged = append(merged, mergeCellRow(row, options.HorizontalThresholdFactor, reextract)...)
+		groups = append(groups, splitRowGroups(row, options.HorizontalThresholdFactor)...)
 	}
+
+	merged := make([]page.TextCell, len(groups))
+	multi := make([]int, 0, len(groups))
+	for i, group := range groups {
+		merged[i] = mergeCellGroup(group)
+		if len(group) > 1 {
+			multi = append(multi, i)
+		}
+	}
+
+	if reextract != nil && len(multi) > 0 {
+		boxes := make([]geom.Box, len(multi))
+		for i, index := range multi {
+			boxes[i] = merged[index].Box
+		}
+		texts := reextract(boxes)
+		for i, index := range multi {
+			if i >= len(texts) {
+				break
+			}
+			if text := strings.TrimSpace(texts[i]); text != "" {
+				merged[index].Text = text
+			}
+		}
+	}
+
 	for index := range merged {
 		merged[index].Index = index
 	}
@@ -81,8 +109,9 @@ func groupCellRows(cells []page.TextCell, verticalFactor float64) [][]page.TextC
 	return rows
 }
 
-func mergeCellRow(row []page.TextCell, horizontalFactor float64, reextract func(geom.Box) string) []page.TextCell {
-	merged := make([]page.TextCell, 0, len(row))
+// splitRowGroups splits one row into runs of horizontally-adjacent cells.
+func splitRowGroups(row []page.TextCell, horizontalFactor float64) [][]page.TextCell {
+	groups := make([][]page.TextCell, 0, len(row))
 	group := []page.TextCell{row[0]}
 
 	for _, cell := range row[1:] {
@@ -92,14 +121,13 @@ func mergeCellRow(row []page.TextCell, horizontalFactor float64, reextract func(
 			group = append(group, cell)
 			continue
 		}
-		merged = append(merged, mergeCellGroup(group, reextract))
+		groups = append(groups, group)
 		group = []page.TextCell{cell}
 	}
-	merged = append(merged, mergeCellGroup(group, reextract))
-	return merged
+	return append(groups, group)
 }
 
-func mergeCellGroup(group []page.TextCell, reextract func(geom.Box) string) page.TextCell {
+func mergeCellGroup(group []page.TextCell) page.TextCell {
 	if len(group) == 1 {
 		return group[0]
 	}
@@ -127,19 +155,15 @@ func mergeCellGroup(group []page.TextCell, reextract func(geom.Box) string) page
 	}
 	box.Origin = geom.TopLeft
 
-	text := ""
-	if reextract != nil {
-		text = strings.TrimSpace(reextract(box))
-	}
-	if text == "" {
-		parts := make([]string, 0, len(group))
-		for _, cell := range group {
-			if trimmed := strings.TrimSpace(cell.Text); trimmed != "" {
-				parts = append(parts, trimmed)
-			}
+	// Join the member texts as the fallback; the caller overwrites this with
+	// the batched reextract result when it yields text for this box.
+	parts := make([]string, 0, len(group))
+	for _, cell := range group {
+		if trimmed := strings.TrimSpace(cell.Text); trimmed != "" {
+			parts = append(parts, trimmed)
 		}
-		text = strings.Join(parts, " ")
 	}
+	text := strings.Join(parts, " ")
 
 	return page.TextCell{
 		Index:      group[0].Index,

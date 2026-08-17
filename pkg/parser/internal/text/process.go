@@ -1091,19 +1091,26 @@ func (tp *TextPage) GetTextByRects(boxes []crt.FloatRect) []string {
 	selected := make([][]int, len(boxes))
 	seen := make([]int, len(boxes))
 	generation := 0
+	var scratch []int  // reused per char; a fresh append here costs one alloc per char
+	var everyBox []int // built once, only for degenerate char boxes
 	for charIndex, ci := range tp.charList {
 		generation++
-		candidates := fallback
+		var candidates []int
 		lo, hi, ok := verticalBands(ci.charBox, bandHeight)
 		if !ok || hi-lo > 4096 {
-			candidates = make([]int, len(boxes))
-			for index := range boxes {
-				candidates[index] = index
+			if everyBox == nil {
+				everyBox = make([]int, len(boxes))
+				for index := range boxes {
+					everyBox[index] = index
+				}
 			}
+			candidates = everyBox
 		} else {
+			scratch = append(scratch[:0], fallback...)
 			for band := lo; band <= hi; band++ {
-				candidates = append(candidates, bands[band]...)
+				scratch = append(scratch, bands[band]...)
 			}
+			candidates = scratch
 		}
 		for _, boxIndex := range candidates {
 			if seen[boxIndex] == generation {

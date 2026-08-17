@@ -489,6 +489,7 @@ func TestFontWeightType1FontInfoWeight(t *testing.T) {
 	f.fontProgramTag = "FontFile"
 	f.glyphSrcReady = true
 	f.glyphSrc = type1WeightStub{weight: "Bold"}
+	f.weightReady = false // drop the memo primed by the precondition probe
 	if got := f.FontWeight(); got < 700 {
 		t.Errorf("FontWeight()=%d want >=700 (embedded Type1 /Weight Bold)", got)
 	}
