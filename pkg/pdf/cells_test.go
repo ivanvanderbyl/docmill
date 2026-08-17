@@ -78,14 +78,39 @@ func TestMergeFragmentedCellsUsesReextractForMergedText(t *testing.T) {
 		mergeCell(0, "He", 0, 0, 8, 10),
 		mergeCell(1, "llo", 9, 0, 20, 10),
 	}
-	var seen geom.Box
-	got := pdf.MergeFragmentedCells(cells, func(b geom.Box) string {
-		seen = b
-		return "Hello"
+	var seen [][]geom.Box
+	got := pdf.MergeFragmentedCells(cells, func(boxes []geom.Box) []string {
+		seen = append(seen, boxes)
+		return []string{"Hello"}
 	}, pdf.MergeOptions{})
 	require.Len(t, got, 1)
 	require.Equal(t, "Hello", got[0].Text)
-	require.Equal(t, geom.Box{L: 0, T: 0, R: 20, B: 10, Origin: geom.TopLeft}, seen)
+	require.Equal(t, [][]geom.Box{{{L: 0, T: 0, R: 20, B: 10, Origin: geom.TopLeft}}}, seen)
+}
+
+func TestMergeFragmentedCellsBatchesReextractAcrossGroups(t *testing.T) {
+	t.Parallel()
+	cells := []page.TextCell{
+		// Row 1: two fragments that merge into one cell.
+		mergeCell(0, "He", 0, 0, 8, 10),
+		mergeCell(1, "llo", 9, 0, 20, 10),
+		// Row 2: a single cell — must not be re-extracted.
+		mergeCell(2, "world", 0, 30, 20, 40),
+		// Row 3: two fragments whose re-extract comes back empty.
+		mergeCell(3, "fa", 0, 60, 8, 70),
+		mergeCell(4, "ll", 9, 60, 20, 70),
+	}
+	calls := 0
+	got := pdf.MergeFragmentedCells(cells, func(boxes []geom.Box) []string {
+		calls++
+		require.Len(t, boxes, 2)
+		return []string{"Hello", ""}
+	}, pdf.MergeOptions{})
+	require.Equal(t, 1, calls, "reextract must be called exactly once for all groups")
+	require.Len(t, got, 3)
+	require.Equal(t, "Hello", got[0].Text)
+	require.Equal(t, "world", got[1].Text)
+	require.Equal(t, "fa ll", got[2].Text, "empty reextract falls back to joined member texts")
 }
 
 func TestMergeFragmentedCellsGroupsVerticalJitter(t *testing.T) {

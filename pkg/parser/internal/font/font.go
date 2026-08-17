@@ -65,6 +65,11 @@ type Font struct {
 	unicodeCache map[uint32]string
 	// widthCache memoizes the CID-font width (a linear /W-triple scan per call).
 	widthCache map[uint32]float32
+	// weight memoizes FontWeight: word-level extraction probes the weight once
+	// per word, and the name-token fallback allocates on every call. 0 is a
+	// valid result ("no weight signal"), hence the separate ready flag.
+	weight      int
+	weightReady bool
 	// charBBoxCache memoizes GetCharBBox results after embedded glyph lookup.
 	charBBoxCache map[uint32][4]int
 
@@ -451,6 +456,14 @@ func (f *Font) Flags() int { return f.flags }
 // name has no "Bold" substring. Returns 0 when nothing indicates a weight
 // (callers fall back to regular).
 func (f *Font) FontWeight() int {
+	if !f.weightReady {
+		f.weight = f.resolveWeight()
+		f.weightReady = true
+	}
+	return f.weight
+}
+
+func (f *Font) resolveWeight() int {
 	// (a) FontDescriptor ForceBold flag.
 	if f.flags&fontStyleForceBold != 0 {
 		return 700
