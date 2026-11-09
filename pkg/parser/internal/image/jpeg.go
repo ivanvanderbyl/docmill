@@ -43,13 +43,13 @@ func decodeJPEG(data []byte, d, resources *objects.Dictionary, w, h int) (*image
 		for x := range w {
 			offset := (y*w + x) * cs.components
 			c := decoded.At(x, y)
-			switch cs.name {
-			case "gray":
+			switch cs.components {
+			case 1:
 				samples[offset] = color.GrayModel.Convert(c).(color.Gray).Y
-			case "rgb", "icc":
+			case 3:
 				rgb := color.NRGBAModel.Convert(c).(color.NRGBA)
 				copy(samples[offset:], []byte{rgb.R, rgb.G, rgb.B})
-			case "cmyk":
+			case 4:
 				cmyk := color.CMYKModel.Convert(c).(color.CMYK)
 				copy(samples[offset:], []byte{cmyk.C, cmyk.M, cmyk.Y, cmyk.K})
 			}

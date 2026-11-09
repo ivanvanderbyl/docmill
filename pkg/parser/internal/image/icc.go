@@ -16,7 +16,7 @@ func iccSpace(profile *objects.Stream) (*space, error) {
 	if err != nil || terminal != "" {
 		return nil, fmt.Errorf("image: invalid ICC stream")
 	}
-	if len(data) < 132 || string(data[36:40]) != "acsp" || string(data[16:20]) != "RGB " || string(data[20:24]) != "XYZ " {
+	if len(data) < 132 || string(data[36:40]) != "acsp" || (string(data[16:20]) != "RGB " && string(data[16:20]) != "GRAY") || string(data[20:24]) != "XYZ " {
 		return nil, fmt.Errorf("image: unsupported ICC profile")
 	}
 	count := int(binary.BigEndian.Uint32(data[128:132]))
@@ -32,6 +32,16 @@ func iccSpace(profile *objects.Stream) (*space, error) {
 			return nil, fmt.Errorf("image: truncated ICC tag")
 		}
 		tags[string(data[p:p+4])] = data[off : off+size]
+	}
+	if string(data[16:20]) == "GRAY" {
+		curve, e := iccCurve(tags["kTRC"])
+		if e != nil {
+			return nil, e
+		}
+		return &space{name: "icc", components: 1, transform: func(v []float64) color.NRGBA {
+			g := unit(srgbGamma(curve(math.Max(0, math.Min(1, v[0])))))
+			return color.NRGBA{g, g, g, 255}
+		}}, nil
 	}
 	var matrix [3][3]float64
 	var curves [3]func(float64) float64

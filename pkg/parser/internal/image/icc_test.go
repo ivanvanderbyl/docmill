@@ -63,3 +63,26 @@ func TestICCParametricCurve(t *testing.T) {
 	_, err = iccCurve([]byte("bad"))
 	require.Error(t, err)
 }
+
+func TestICCGrayProfile(t *testing.T) {
+	profile := make([]byte, 158)
+	copy(profile[16:], "GRAY")
+	copy(profile[20:], "XYZ ")
+	copy(profile[36:], "acsp")
+	binary.BigEndian.PutUint32(profile[128:], 1)
+	copy(profile[132:], "kTRC")
+	binary.BigEndian.PutUint32(profile[136:], 144)
+	binary.BigEndian.PutUint32(profile[140:], 14)
+	copy(profile[144:], "curv")
+	binary.BigEndian.PutUint32(profile[152:], 1)
+	profile = append(profile, 0, 0)
+	// Gamma 1 maps linear 0.5 into approximately sRGB 0.735.
+	binary.BigEndian.PutUint16(profile[156:], 256)
+	cs, err := iccSpace(objects.NewStreamFromSpan(profile))
+	require.NoError(t, err)
+	require.Equal(t, 1, cs.components)
+	pixel := cs.rgb([]float64{.5})
+	require.InDelta(t, 188, pixel.R, 1)
+	require.Equal(t, pixel.R, pixel.G)
+	require.Equal(t, pixel.G, pixel.B)
+}
