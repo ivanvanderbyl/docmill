@@ -2,7 +2,9 @@
 
 The native `parser.Backend` supports PDF page copying, merging, image extraction,
 attachment enumeration, and password-protected documents. These APIs operate in
-memory and do not require pdfcpu or a PDFium shared library.
+memory and do not require pdfcpu or a PDFium shared library. For installation,
+complete examples, ownership, and error handling, start with the
+[integration guide](integration.md).
 
 Open a document and obtain its native operations:
 
@@ -29,7 +31,9 @@ MediaBox, CropBox, Rotate, and Resources values. It remaps indirect references
 into the new document. It does not copy catalog-level outlines, attachments,
 metadata, or the AcroForm field tree. Do not use page copying to preserve an
 interactive form's document-level behavior or a digital signature. Use
-`doc.WritePDF` when you need to serialize the whole document.
+`doc.WritePDF` when you need to serialize the whole document. It also rewrites
+the file and does not preserve digital signatures. See the
+[signature guide](signatures.md) for operations on signed input.
 
 `parser.WritePageSelections` combines selections from open native documents.
 `parser.MergePDFs(ctx, first, second)` combines every page from PDF byte slices.
