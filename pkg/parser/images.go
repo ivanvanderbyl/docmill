@@ -60,6 +60,9 @@ func (d *Document) ExtractImages(ctx context.Context, pages []int) ([]ExtractedI
 		}
 		out = append(out, c.images...)
 	}
+	if err := d.doc.DecryptionError(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 

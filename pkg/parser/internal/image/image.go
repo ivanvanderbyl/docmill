@@ -57,7 +57,10 @@ func decode(stream *objects.Stream, resources *objects.Dictionary, seen map[*obj
 			return nil, nil, err
 		}
 		if !d.KeyExist("Decode") && !d.KeyExist("Mask") {
-			original = data
+			cs, e := colorSpace(d.GetObjectFor("ColorSpace"), resources, make(map[objects.Object]bool))
+			if e == nil && cs.name != "icc" {
+				original = data
+			}
 		}
 	} else {
 		pixels, err = decodeRaw(data, d, resources, w, h)

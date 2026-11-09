@@ -22,7 +22,11 @@ func decodeJPEG(data []byte, d, resources *objects.Dictionary, w, h int) (*image
 	if err != nil {
 		return nil, err
 	}
-	if !d.KeyExist("Decode") && d.GetArrayFor("Mask") == nil {
+	cs, err := colorSpace(d.GetObjectFor("ColorSpace"), resources, make(map[objects.Object]bool))
+	if err != nil {
+		return nil, err
+	}
+	if !d.KeyExist("Decode") && d.GetArrayFor("Mask") == nil && cs.name != "icc" {
 		out := image.NewNRGBA(image.Rect(0, 0, w, h))
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
@@ -30,10 +34,6 @@ func decodeJPEG(data []byte, d, resources *objects.Dictionary, w, h int) (*image
 			}
 		}
 		return out, nil
-	}
-	cs, err := colorSpace(d.GetObjectFor("ColorSpace"), resources, make(map[objects.Object]bool))
-	if err != nil {
-		return nil, err
 	}
 	if cs.name == "indexed" {
 		return nil, fmt.Errorf("image: indexed JPEG is unsupported")
@@ -46,7 +46,7 @@ func decodeJPEG(data []byte, d, resources *objects.Dictionary, w, h int) (*image
 			switch cs.name {
 			case "gray":
 				samples[offset] = color.GrayModel.Convert(c).(color.Gray).Y
-			case "rgb":
+			case "rgb", "icc":
 				rgb := color.NRGBAModel.Convert(c).(color.NRGBA)
 				copy(samples[offset:], []byte{rgb.R, rgb.G, rgb.B})
 			case "cmyk":
