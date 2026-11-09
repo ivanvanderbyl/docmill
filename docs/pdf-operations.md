@@ -64,7 +64,8 @@ password. `OpenBytes` tries the empty password. Use `errors.Is` to distinguish
 
 The standard security handler supports revisions 2 through 6 with RC4 or AES.
 Mixed stream and string crypt filters and unsupported security handlers return
-an error. `doc.IsEncrypted(ctx)` identifies encrypted inputs even when they
+an error. Identity crypt-filter configurations still require password
+authentication; this is stricter than PDFium's no-encryption shortcut. `doc.IsEncrypted(ctx)` identifies encrypted inputs even when they
 open with an empty user password. `WritePDF` and page-copy operations write
 unencrypted output. Passwords and access permissions are not copied to that
 output.
