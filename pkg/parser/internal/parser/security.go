@@ -105,18 +105,44 @@ func standardCipher(d *objects.Dictionary) (*securityHandler, int, Error) {
 	h := &securityHandler{revision: r, metadata: d.GetBooleanFor("EncryptMetadata", true)}
 	defaults := map[int]int{1: 40, 2: 40, 4: 128, 5: 256}
 	n := d.GetIntegerWithDefaultFor("Length", defaults[v]) / 8
+	if v == 1 {
+		n = 5
+	}
 	if v >= 4 {
 		if e := loadCryptFilter(d, h); e != Success {
 			return nil, 0, e
 		}
 	}
-	if r >= 5 && (n != 32 || (!h.aes && !h.identity)) {
-		return nil, 0, HandlerError
+	if v == 4 && !h.identity {
+		n = filterKeyLength(d, h.filterName, n)
 	}
-	if r < 5 && (n < 5 || n > 16 || (h.aes && n != 16)) {
+	if !validCipherLength(h, n) {
 		return nil, 0, HandlerError
 	}
 	return h, n, Success
+}
+
+func validCipherLength(h *securityHandler, n int) bool {
+	if h.revision >= 5 {
+		return n == 32 && (h.aes || h.identity)
+	}
+	return n >= 5 && n <= 16 && (!h.aes || n == 16)
+}
+
+func filterKeyLength(d *objects.Dictionary, name string, fallback int) int {
+	filters := d.GetDictFor("CF")
+	entry := filters.GetDictFor(name)
+	bits := entry.GetIntegerFor("Length")
+	if bits == 0 {
+		return fallback
+	}
+	if bits < 0 {
+		return -1
+	}
+	if bits < 40 {
+		return bits
+	}
+	return bits / 8
 }
 
 func loadCryptFilter(d *objects.Dictionary, h *securityHandler) Error {
@@ -232,7 +258,7 @@ func (c legacySecurity) userKey(password []byte) []byte {
 		expected := rc4Bytes(key, passwordPadding)
 		if c.revision >= 3 {
 			expected = md5Bytes(append(append([]byte{}, passwordPadding...), c.id...))
-			for i := 0; i < 20; i++ {
+			for i := range 20 {
 				expected = rc4Bytes(xorKey(key, byte(i)), expected)
 			}
 		}
@@ -398,14 +424,19 @@ func (h *securityHandler) decrypt(data []byte, objnum, gennum uint32) ([]byte, e
 }
 
 func (h *securityHandler) decryptObject(obj objects.Object) (objects.Object, error) {
+	return h.decryptObjectWithResolver(obj, objects.Direct)
+}
+
+func (h *securityHandler) decryptObjectWithResolver(obj objects.Object, resolve func(objects.Object) objects.Object) (objects.Object, error) {
 	if obj.GetObjNum() == h.encryptObject {
 		return obj, nil
 	}
-	walker := objectDecryptor{handler: h, number: obj.GetObjNum(), generation: obj.GetGenNum(), visited: make(map[objects.Object]bool)}
+	walker := objectDecryptor{handler: h, number: obj.GetObjNum(), generation: obj.GetGenNum(), visited: make(map[objects.Object]bool), resolve: resolve}
 	return walker.walk(obj)
 }
 
 type objectDecryptor struct {
+	resolve    func(objects.Object) objects.Object
 	handler    *securityHandler
 	number     uint32
 	generation uint32
@@ -445,7 +476,7 @@ func (w *objectDecryptor) walk(v objects.Object) (objects.Object, error) {
 
 func (w *objectDecryptor) dictionary(d *objects.Dictionary) error {
 	for _, key := range d.GetKeys() {
-		if key == "Contents" && (d.GetNameFor("Type") == "Sig" || d.GetNameFor("FT") == "Sig") {
+		if key == "Contents" && (w.name(d, "Type") == "Sig" || w.name(d, "FT") == "Sig") {
 			continue
 		}
 		child, err := w.walk(d.GetObjectFor(key))
@@ -458,16 +489,16 @@ func (w *objectDecryptor) dictionary(d *objects.Dictionary) error {
 }
 
 func (w *objectDecryptor) stream(s *objects.Stream) error {
-	if s.Dict().GetNameFor("Type") == "XRef" {
+	if w.name(s.Dict(), "Type") == "XRef" {
 		return nil
 	}
 	if err := w.dictionary(s.Dict()); err != nil {
 		return err
 	}
-	if !w.handler.metadata && s.Dict().GetNameFor("Type") == "Metadata" {
+	if !w.handler.metadata && w.name(s.Dict(), "Type") == "Metadata" {
 		return nil
 	}
-	decrypt, err := w.handler.streamEncryption(s.Dict())
+	decrypt, err := w.handler.streamEncryption(s.Dict(), w.resolve)
 	if err != nil {
 		return err
 	}
@@ -486,18 +517,21 @@ func (w *objectDecryptor) stream(s *objects.Stream) error {
 
 // An explicit Crypt filter overrides the default stream filter. It must run
 // before other filters, so remove it after handling encryption here.
-func (h *securityHandler) streamEncryption(d *objects.Dictionary) (bool, error) {
-	filter := d.GetDirectObjectFor("Filter")
+func (h *securityHandler) streamEncryption(d *objects.Dictionary, resolve func(objects.Object) objects.Object) (bool, error) {
+	if err := materializeCryptoParameters(d, resolve); err != nil {
+		return false, err
+	}
+	filter := resolve(d.GetObjectFor("Filter"))
 	if filter == nil {
 		return true, nil
 	}
 	name := filter.GetString()
 	filters := objects.ToArray(filter)
 	if filters != nil {
-		if hasNonleadingCrypt(filters) {
+		if hasNonleadingCrypt(filters, resolve) {
 			return false, errors.New("Crypt filter must be first")
 		}
-		first := filters.GetDirectObjectAt(0)
+		first := resolve(filters.GetObjectAt(0))
 		if first == nil {
 			return true, nil
 		}
@@ -506,15 +540,13 @@ func (h *securityHandler) streamEncryption(d *objects.Dictionary) (bool, error) 
 	if name != "Crypt" {
 		return true, nil
 	}
-	params := d.GetDictFor("DecodeParms")
-	paramArray := d.GetArrayFor("DecodeParms")
+	paramsObject := resolve(d.GetObjectFor("DecodeParms"))
+	params := objects.ToDictionary(paramsObject)
+	paramArray := objects.ToArray(paramsObject)
 	if paramArray != nil {
-		params = paramArray.GetDictAt(0)
+		params = objects.ToDictionary(resolve(paramArray.GetObjectAt(0)))
 	}
-	selected := "Identity"
-	if params != nil && params.GetNameFor("Name") != "" {
-		selected = params.GetNameFor("Name")
-	}
+	selected := selectedCryptFilter(params, resolve)
 	if selected != "Identity" && selected != h.filterName {
 		return false, errors.New("unsupported stream crypt filter")
 	}
@@ -522,9 +554,13 @@ func (h *securityHandler) streamEncryption(d *objects.Dictionary) (bool, error) 
 		d.RemoveFor("Filter")
 		d.RemoveFor("DecodeParms")
 	} else {
+		filters = objects.ToArray(filters.Clone())
 		filters.RemoveAt(0)
+		d.SetFor("Filter", filters)
 		if paramArray != nil {
+			paramArray = objects.ToArray(paramArray.Clone())
 			paramArray.RemoveAt(0)
+			d.SetFor("DecodeParms", paramArray)
 		}
 	}
 	return selected != "Identity", nil
@@ -550,11 +586,103 @@ func latin1ToUTF8(password []byte) []byte {
 	return []byte(string(runes))
 }
 
-func hasNonleadingCrypt(filters *objects.Array) bool {
+func hasNonleadingCrypt(filters *objects.Array, resolve func(objects.Object) objects.Object) bool {
 	for i := 1; i < filters.Len(); i++ {
-		if item := filters.GetDirectObjectAt(i); item != nil && item.GetString() == "Crypt" {
+		if item := resolve(filters.GetObjectAt(i)); item != nil && item.GetString() == "Crypt" {
 			return true
 		}
 	}
 	return false
+}
+
+func (w *objectDecryptor) name(d *objects.Dictionary, key string) string {
+	obj := w.resolve(d.GetObjectFor(key))
+	if obj == nil {
+		return ""
+	}
+	return obj.GetString()
+}
+
+// Crypto runs inside the holder's serialized parser call. Resolving through the
+// public holder here would reacquire its mutex. ParseIndirectObject retains the
+// parser's object-number cycle guard without taking that mutex again.
+func (p *Parser) resolveCryptoObject(obj objects.Object) objects.Object {
+	seen := make(map[uint32]bool)
+	for range 100 {
+		ref := objects.ToReference(obj)
+		if ref == nil {
+			return obj
+		}
+		id := ref.GetRefObjNum()
+		if seen[id] {
+			return nil
+		}
+		seen[id] = true
+		obj = p.ParseIndirectObject(id)
+	}
+	return nil
+}
+
+// Object-stream filter decoding also runs under the parser lock. Materialize
+// its small parameter graph now so the codec never re-enters the holder.
+func directCryptoParameter(obj objects.Object, resolve func(objects.Object) objects.Object, active map[objects.Object]bool, depth int) (objects.Object, error) {
+	if depth > 100 {
+		return nil, errors.New("crypto parameter nesting limit")
+	}
+	obj = resolve(obj)
+	if obj == nil {
+		return nil, nil
+	}
+	if active[obj] {
+		return nil, errors.New("cyclic crypto parameters")
+	}
+	active[obj] = true
+	defer delete(active, obj)
+	switch v := obj.(type) {
+	case *objects.Array:
+		out := objects.NewArray()
+		for i := 0; i < v.Len(); i++ {
+			item, err := directCryptoParameter(v.GetObjectAt(i), resolve, active, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out.Append(item)
+		}
+		return out, nil
+	case *objects.Dictionary:
+		out := objects.NewDictionary()
+		for _, key := range v.GetKeys() {
+			item, err := directCryptoParameter(v.GetObjectFor(key), resolve, active, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out.SetFor(key, item)
+		}
+		return out, nil
+	default:
+		return obj.Clone(), nil
+	}
+}
+
+func materializeCryptoParameters(d *objects.Dictionary, resolve func(objects.Object) objects.Object) error {
+	for _, key := range []string{"Filter", "DecodeParms"} {
+		if !d.KeyExist(key) {
+			continue
+		}
+		direct, err := directCryptoParameter(d.GetObjectFor(key), resolve, make(map[objects.Object]bool), 0)
+		if err != nil {
+			return err
+		}
+		d.SetFor(key, direct)
+	}
+	return nil
+}
+
+func selectedCryptFilter(params *objects.Dictionary, resolve func(objects.Object) objects.Object) string {
+	if params != nil {
+		if name := resolve(params.GetObjectFor("Name")); name != nil && name.GetString() != "" {
+			return name.GetString()
+		}
+	}
+	return "Identity"
 }

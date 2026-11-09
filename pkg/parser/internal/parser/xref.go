@@ -556,7 +556,7 @@ func (p *Parser) parseIndirectObjectAt(pos int64, objnum uint32) objects.Object 
 	}
 	if result != nil && p.security != nil {
 		var err error
-		result, err = p.security.decryptObject(result)
+		result, err = p.security.decryptObjectWithResolver(result, p.resolveCryptoObject)
 		if err != nil {
 			failure := fmt.Errorf("decrypt object %d: %w", objnum, err)
 			p.decryptionErr.CompareAndSwap(nil, &failure)

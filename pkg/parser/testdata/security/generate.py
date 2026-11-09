@@ -17,3 +17,6 @@ for name,password,bits,opts in cases:
  if 'object-streams' in name:args+=['--object-streams=generate']
  args+=[str(p/'plain.pdf'),str(p/(name+'.pdf'))]
  subprocess.run(args,check=True)
+
+# The crypt filter length takes precedence over the document Length for V4.
+(p/"r4-filter-length.pdf").write_bytes((p/"r4.pdf").read_bytes().replace(b"/Length 128", b"/Length 040", 1))

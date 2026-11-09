@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestPasswordConformance(t *testing.T) {
@@ -20,7 +21,7 @@ func TestPasswordConformance(t *testing.T) {
 	require.NoError(t, err)
 	expectedCells, err := pg.TextCells(context.Background())
 	require.NoError(t, err)
-	for _, name := range []string{"r2", "r3", "r4", "r5", "r6", "r4-clear-metadata", "r6-object-streams"} {
+	for _, name := range []string{"r2", "r3", "r4", "r5", "r6", "r4-clear-metadata", "r4-filter-length", "r6-object-streams"} {
 		for _, password := range []string{"user", "owner"} {
 			t.Run(name+"/"+password, func(t *testing.T) {
 				data, err := os.ReadFile("testdata/security/" + name + ".pdf")
@@ -149,4 +150,54 @@ func TestMalformedEncryptedStreamFailsWithoutWriting(t *testing.T) {
 	var out bytes.Buffer
 	require.Error(t, doc.(*parser.Document).WritePDF(context.Background(), &out))
 	require.Zero(t, out.Len())
+}
+
+func TestEncryptedIndirectObjects(t *testing.T) {
+	if name := os.Getenv("DOCMILL_CRYPTO_CHILD"); name != "" {
+		data, err := os.ReadFile("testdata/security/r4.pdf")
+		require.NoError(t, err)
+		extra := "\n99 0 obj\n/FlateDecode\nendobj\n"
+		switch name {
+		case "filter":
+			data = bytes.Replace(data, []byte("/Filter /FlateDecode"), []byte("/Filter 99 0 R"), 1)
+		case "filter array":
+			data = bytes.Replace(data, []byte("/Filter /FlateDecode"), []byte("/Filter 99 0 R /DecodeParms [<< /Name /StdCF >> null]"), 1)
+			extra = "\n99 0 obj\n[/Crypt /FlateDecode]\nendobj\n"
+		case "decode parameters":
+			data = bytes.Replace(data, []byte("/Filter /FlateDecode"), []byte("/Filter [/Crypt /FlateDecode] /DecodeParms [99 0 R null]"), 1)
+			extra = "\n99 0 obj\n<< /Name /StdCF >>\nendobj\n"
+		case "signature type":
+			extra = "\n99 0 obj\n<< /Type 100 0 R /Contents <01020304> >>\nendobj\n100 0 obj\n/Sig\nendobj\n"
+		}
+		offset := bytes.Index(data, []byte("\nxref\n"))
+		if offset < 0 {
+			offset = bytes.LastIndex(data, []byte("\nstartxref\n"))
+		}
+		require.Positive(t, offset)
+		data = append(append(append([]byte{}, data[:offset]...), []byte(extra)...), data[offset:]...)
+		doc, err := (&parser.Backend{}).OpenBytesWithPassword(context.Background(), data, "user")
+		require.NoError(t, err)
+		var out bytes.Buffer
+		require.NoError(t, doc.(*parser.Document).WritePDF(context.Background(), &out))
+		require.NotZero(t, out.Len())
+		reopened, err := (&parser.Backend{}).OpenBytes(context.Background(), out.Bytes())
+		require.NoError(t, err)
+		page, err := reopened.Page(context.Background(), 0)
+		require.NoError(t, err)
+		cells, err := page.TextCells(context.Background())
+		require.NoError(t, err)
+		require.NotEmpty(t, cells)
+		return
+	}
+	for _, name := range []string{"filter", "filter array", "decode parameters", "signature type"} {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestEncryptedIndirectObjects$")
+			command.Env = append(os.Environ(), "DOCMILL_CRYPTO_CHILD="+name)
+			output, err := command.CombinedOutput()
+			require.NoError(t, err, string(output))
+			require.NoError(t, ctx.Err(), "encrypted indirect object parsing must terminate")
+		})
+	}
 }

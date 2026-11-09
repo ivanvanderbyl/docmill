@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"crypto/aes"
+	"encoding/binary"
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 	"github.com/stretchr/testify/require"
 	"os"
@@ -89,4 +91,104 @@ func TestExplicitIdentityStreamFilter(t *testing.T) {
 	require.Equal(t, 1, dict.GetArrayFor("Filter").Len())
 	require.Equal(t, "FlateDecode", dict.GetArrayFor("Filter").GetByteStringAt(0))
 	require.Equal(t, 1, dict.GetArrayFor("DecodeParms").Len())
+	require.Equal(t, 2, filters.Len(), "shared filter array must not be mutated")
+	require.Equal(t, 2, params.Len(), "shared decode parameters must not be mutated")
+}
+
+func TestCryptFilterLengthOverridesDocumentLength(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		bits, length, want int
+		result             Error
+	}{
+		{"byte length overrides bits", 40, 16, 16, Success},
+		{"bit length overrides bits", 40, 128, 16, Success},
+		{"zero uses document default", 128, 0, 16, Success},
+		{"negative filter length rejected", 128, -16, 0, HandlerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := objects.NewDictionary()
+			d.SetNewNameFor("Filter", "Standard")
+			d.SetFor("V", objects.NewNumberFromInt(4))
+			d.SetFor("R", objects.NewNumberFromInt(4))
+			d.SetFor("Length", objects.NewNumberFromInt(int32(tc.bits)))
+			d.SetNewNameFor("StmF", "StdCF")
+			d.SetNewNameFor("StrF", "StdCF")
+			cf := objects.NewDictionary()
+			entry := objects.NewDictionary()
+			entry.SetNewNameFor("CFM", "AESV2")
+			entry.SetFor("Length", objects.NewNumberFromInt(int32(tc.length)))
+			cf.SetFor("StdCF", entry)
+			d.SetFor("CF", cf)
+			_, n, e := standardCipher(d)
+			require.Equal(t, tc.result, e)
+			if e == Success {
+				require.Equal(t, tc.want, n)
+			}
+		})
+	}
+}
+
+// PDFium tolerates a non-F metadata marker when EncryptMetadata is true.
+func TestPermissionsValidationMatchesPDFiumCompatibility(t *testing.T) {
+	for _, tc := range []struct {
+		name, marker string
+		permission   int32
+		metadata     bool
+		flag         byte
+		want         bool
+	}{
+		{"valid", "adb", -4, true, 'T', true},
+		{"invalid marker", "abc", -4, true, 'T', false},
+		{"permissions mismatch", "adb", -8, true, 'T', false},
+		{"unencrypted metadata", "adb", -4, false, 'F', true},
+		{"metadata mismatch", "adb", -4, false, 'T', false},
+		{"legacy marker tolerance", "adb", -4, true, 'X', true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key := make([]byte, 32)
+			block, err := aes.NewCipher(key)
+			require.NoError(t, err)
+			clear := make([]byte, 16)
+			binary.LittleEndian.PutUint32(clear, uint32(tc.permission))
+			clear[8] = tc.flag
+			copy(clear[9:12], tc.marker)
+			encrypted := make([]byte, 16)
+			block.Encrypt(encrypted, clear)
+			d := objects.NewDictionary()
+			d.SetFor("P", objects.NewNumberFromInt(-4))
+			d.SetFor("Perms", objects.NewString(string(encrypted), true))
+			require.Equal(t, tc.want, validPermissions(d, key, tc.metadata))
+		})
+	}
+}
+
+func TestIndirectCryptoParametersAreMaterializedLocally(t *testing.T) {
+	filters := objects.NewArray()
+	filters.Append(objects.NewReference(nil, 1))
+	params := objects.NewDictionary()
+	params.SetFor("Predictor", objects.NewReference(nil, 2))
+	dict := objects.NewDictionary()
+	dict.SetFor("Filter", filters)
+	dict.SetFor("DecodeParms", params)
+	stream := objects.NewStreamFromData([]byte("data"), dict)
+	stream.SetObjNum(7)
+	resolve := func(o objects.Object) objects.Object {
+		if r := objects.ToReference(o); r != nil {
+			switch r.GetRefObjNum() {
+			case 1:
+				return objects.NewName("FlateDecode")
+			case 2:
+				return objects.NewNumberFromInt(1)
+			}
+		}
+		return o
+	}
+	h := &securityHandler{identity: true, metadata: true, encryptObject: 99}
+	_, err := h.decryptObjectWithResolver(stream, resolve)
+	require.NoError(t, err)
+	require.Equal(t, objects.TypeName, dict.GetArrayFor("Filter").GetObjectAt(0).Type())
+	require.Equal(t, objects.TypeNumber, dict.GetDictFor("DecodeParms").GetObjectFor("Predictor").Type())
+	require.Equal(t, objects.TypeReference, filters.GetObjectAt(0).Type())
+	require.Equal(t, objects.TypeReference, params.GetObjectFor("Predictor").Type())
 }
