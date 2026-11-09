@@ -17,6 +17,7 @@ const kPageMaxNum = 0xFFFFF // 1048575
 type Document struct {
 	*parser.Holder
 	prs      *parser.Parser
+	source   []byte
 	rootDict *objects.Dictionary
 	pageList []uint32
 	// pageMu guards the lazy page-list cache in GetPageDict. Page classification
@@ -34,8 +35,9 @@ func OpenWithPassword(buf []byte, password string) (*Document, parser.Error) {
 	p := parser.New()
 	p.SetPassword(password)
 	h := parser.NewHolder(p)
-	d := &Document{Holder: h, prs: p}
-	err := p.StartParse(buf, d)
+	source := append([]byte(nil), buf...)
+	d := &Document{Holder: h, prs: p, source: source}
+	err := p.StartParse(source, d)
 	return d, err
 }
 

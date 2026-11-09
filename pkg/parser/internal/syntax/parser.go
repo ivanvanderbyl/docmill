@@ -25,9 +25,10 @@ const (
 // SyntaxParser lexes a whole PDF held in buf. Positions exposed via GetPos/SetPos
 // are document-relative; the physical byte index is pos + headerOffset.
 type SyntaxParser struct {
-	buf          []byte
-	headerOffset int
-	pos          int
+	buf           []byte
+	headerOffset  int
+	sourceOffsets bool
+	pos           int
 
 	wordBuf  []byte // shared word buffer (reused across tokens)
 	wordSize int
@@ -38,13 +39,15 @@ type SyntaxParser struct {
 
 // New returns a parser over buf with a zero header offset.
 func New(buf []byte) *SyntaxParser {
-	return NewWithOffset(buf, 0)
+	p := NewWithOffset(buf, 0)
+	p.sourceOffsets = false
+	return p
 }
 
 // NewWithOffset returns a parser over buf whose document origin is headerOffset
 // (the byte index of "%PDF").
 func NewWithOffset(buf []byte, headerOffset int) *SyntaxParser {
-	return &SyntaxParser{buf: buf, headerOffset: headerOffset, wordBuf: make([]byte, wordBufCap+1)}
+	return &SyntaxParser{buf: buf, headerOffset: headerOffset, sourceOffsets: true, wordBuf: make([]byte, wordBufCap+1)}
 }
 
 // GetPos returns the document-relative cursor.
@@ -420,9 +423,19 @@ func (p *SyntaxParser) getObjectBodyInternal(holder objects.IndirectObjectHolder
 	case "null":
 		return objects.NewNull()
 	case "(":
-		return objects.NewString(p.ReadString(), false)
+		start := p.pos - 1
+		value := objects.NewString(p.ReadString(), false)
+		if p.sourceOffsets {
+			value.SetSourceRange(int64(p.headerOffset+start), int64(p.headerOffset+p.pos))
+		}
+		return value
 	case "<":
-		return objects.NewString(string(p.ReadHexString()), true)
+		start := p.pos - 1
+		value := objects.NewString(string(p.ReadHexString()), true)
+		if p.sourceOffsets {
+			value.SetSourceRange(int64(p.headerOffset+start), int64(p.headerOffset+p.pos))
+		}
+		return value
 	case "[":
 		arr := objects.NewArray()
 		for {
