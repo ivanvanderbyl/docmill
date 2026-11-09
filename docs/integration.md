@@ -21,7 +21,7 @@ Import paths use the module prefix `github.com/ivanvanderbyl/docmill/v2`.
 | Read or fill AcroForm values | `AcroFormValues`, `SetAcroFormValues`, `WritePDF` | Filling changes in-memory values; save explicitly. |
 | Read form geometry and labels | `(*parser.Page).FormFieldBoxes` | Includes unfilled fields and individual widgets. |
 | Inspect attachment metadata or active content | `Attachments`, `HasActiveContent` | Inspection results for an application policy; no sanitisation. |
-| Place a visible image or verify a digital signature | See [signature APIs](signatures.md) | Image placement, byte integrity, and certificate trust have distinct contracts. |
+| Place an image, sign a PDF, or verify a signature | See [signature APIs](signatures.md) | Image placement, cryptographic signing, byte integrity, and certificate trust have distinct contracts. |
 
 The CLI exposes PDF/JSON conversion, AcroForm commands, and benchmarking.
 Use the Go APIs for the additional operations in this table.

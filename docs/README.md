@@ -8,7 +8,8 @@
   replace another library while preserving the application's contract.
 - [Native PDF operations](pdf-operations.md): page copying and merging, image
   formats, encryption, attachments, and active-content inspection.
-- [Signature images and verification](signatures.md): visible image placement,
+- [Signature images, signing, and verification](signatures.md): visible image placement,
+  cryptographic signing,
   signature metadata, byte integrity, certificate trust, and coverage.
 - [CLI quick start](../README.md#usage): conversion and AcroForm commands.
 - [Go API reference](https://pkg.go.dev/github.com/ivanvanderbyl/docmill/v2/pkg/parser):
@@ -21,7 +22,8 @@
 - [DPBench workflow](../benchmarks/dpbench/README.md): corpus setup, tool
   configuration, and cross-tool evaluation.
 - [Native PDF operation validation](benchmarks/2026-11-09-native-pdf-operations.md)
-  and [signature operation validation](benchmarks/2026-11-09-signature-operations.md):
+  [signature operation validation](benchmarks/2026-11-09-signature-operations.md),
+  and [cryptographic signing validation](benchmarks/2026-11-09-pdf-signing.md):
   dated evidence with its scope and limits.
 - [Historical incident regressions](pdf-incident-regressions.md): public
   regression cases and what they establish.

@@ -1,7 +1,7 @@
-# Signature images and verification
+# Signature images, signing, and verification
 
-Docmill can place an image on a PDF and inspect or verify existing PDF digital
-signatures. These are separate operations. An image of handwriting does not
+Docmill can place an image on a PDF, create a cryptographic signature, and
+inspect or verify existing PDF digital signatures. These are separate operations. An image of handwriting does not
 cryptographically sign a document.
 
 ## Place an image
@@ -29,6 +29,58 @@ creates a new file rather than an incremental update. It cannot preserve an
 existing signature while changing a page. Use
 `errors.Is(err, parser.ErrSignedDocument)` to distinguish this refusal.
 The text form setter also rejects signature fields; setting a field's string value is not a signing operation.
+
+## Create a cryptographic signature
+
+Use `Sign` with a Go `crypto.Signer` and its X.509 certificate:
+
+```go
+err := doc.Sign(ctx, output, parser.SignOptions{
+    Signer: key,
+    Certificate: certificate,
+    Chain: issuerCertificates,
+    FieldName: "Approval",
+    Reason: "Approved",
+})
+```
+
+The signer may hold a local private key or adapt an HSM or remote key service.
+Docmill does not load or store private keys. Signing currently supports RSA
+PKCS#1 v1.5 and ECDSA. The signer receives standard `crypto.Hash` options;
+RSA-PSS signing is not provided by this API, although verification supports it.
+The output uses the `adbe.pkcs7.detached` signature subfilter.
+
+`Hash` defaults to `crypto.SHA256`; SHA-384 and SHA-512 are also supported.
+`SigningTime` defaults to now and is a claimed time, not a trusted timestamp.
+`Chain` contains optional issuer certificates in issuer-to-root order.
+The signing key must match `Certificate`. The certificate must permit signing
+and be valid at the selected signing time. This does not establish external
+trust in the certificate.
+
+`FieldName` identifies a new, invisible signature field. It defaults to an
+available name and must not collide with an existing field. Explicit names must
+not contain periods or leading/trailing whitespace. To include a
+handwritten image in the signed content, stamp the unsigned document first,
+reopen that output, and then sign it.
+
+Signing appends a PDF revision. For an already-signed document, the original
+bytes are preserved and existing signatures must remain cryptographically
+intact. Pending in-memory edits to such a document are rejected. Do not mutate form
+values concurrently with signing. For an unsigned
+document, pending form edits are included in a fresh snapshot before signing.
+Encrypted inputs, certification permissions, and usage-rights signatures are
+rejected rather than silently changing their protections.
+
+`SignatureSize` reserves CMS capacity before the key is called. Its default is
+32 KiB and its maximum is 1 MiB. The signer is called at most once per attempt. If its CMS result
+exceeds that capacity, `ErrSignatureCapacity` is returned without writing a PDF
+or retrying the signer. The generated signature is verified before output is
+written. Writer failures can still leave partial output, as with other `io.Writer`
+APIs.
+
+Context cancellation is checked around the operation. `crypto.Signer.Sign` has
+no context parameter, so a remote adapter must arrange cancellation of its own
+request. No timestamp service or revocation service is contacted by signing.
 
 ## Inspect signatures
 
@@ -89,8 +141,8 @@ return a failed result rather than a success. SHA-1 is not supported. CAdES
 support checks a single signing-certificate-v2 identifier; additional
 certificate-path constraints or certificate policies are rejected. RSA-PSS
 requires matching message and MGF1 hashes, digest-length salt, and trailer 1.
-Digital-signature creation and
-incremental signed-document editing are not provided by the image-stamping API.
+The image-stamping API does not create a cryptographic signature or edit an
+already-signed document. Use `Sign` for incremental approval signatures.
 
 ## Conformance sources
 
