@@ -23,7 +23,8 @@ type ExtractedImage struct {
 }
 
 // ExtractImages returns images from selected zero-based pages, including nested
-// forms and inline images. A nil selection means all pages. Shared resources
+// forms and inline images. Stencils use black paint with their mask alpha.
+// A nil selection means all pages. Shared resources
 // appear once per page. This extracts images; it does not render whole pages.
 func (d *Document) ExtractImages(ctx context.Context, pages []int) ([]ExtractedImage, error) {
 	if err := ctx.Err(); err != nil {

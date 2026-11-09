@@ -69,15 +69,21 @@ func InlineImages(data []byte, resources *objects.Dictionary) ([]*objects.Stream
 
 func inlineEnd(data []byte, start int, d, resources *objects.Dictionary) (int, int, error) {
 	if !d.KeyExist("Filter") {
-		cs, err := colorSpace(d.GetObjectFor("ColorSpace"), resources, make(map[objects.Object]bool))
-		if err != nil {
-			return 0, 0, err
+		components := 1
+		bpc := d.GetIntegerWithDefaultFor("BitsPerComponent", 1)
+		if !d.GetBooleanFor("ImageMask", false) {
+			cs, err := colorSpace(d.GetObjectFor("ColorSpace"), resources, make(map[objects.Object]bool))
+			if err != nil {
+				return 0, 0, err
+			}
+			components = cs.components
+			bpc = d.GetIntegerFor("BitsPerComponent")
 		}
-		w, h, bpc := d.GetIntegerFor("Width"), d.GetIntegerFor("Height"), d.GetIntegerFor("BitsPerComponent")
+		w, h := d.GetIntegerFor("Width"), d.GetIntegerFor("Height")
 		if w <= 0 || h <= 0 || w > 131071 || h > 131071 || bpc <= 0 || bpc > 16 {
 			return 0, 0, fmt.Errorf("image: invalid inline dimensions")
 		}
-		length := (uint64(w)*uint64(cs.components)*uint64(bpc) + 7) / 8 * uint64(h)
+		length := (uint64(w)*uint64(components)*uint64(bpc) + 7) / 8 * uint64(h)
 		if length > uint64(len(data)-start) {
 			return 0, 0, fmt.Errorf("image: truncated inline image")
 		}

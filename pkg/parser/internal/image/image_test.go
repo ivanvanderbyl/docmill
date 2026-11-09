@@ -225,3 +225,59 @@ func TestPNGImagePredictor(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, color.NRGBA{255, 0, 0, 255}, im.NRGBAAt(0, 0))
 }
+
+func TestStencilAndExplicitMask(t *testing.T) {
+	mask := stream(2, 1, 1, "", []byte{0x40})
+	mask.Dict().SetFor("ImageMask", objects.NewBoolean(true))
+	mask.Dict().RemoveFor("ColorSpace")
+	im, _, err := Decode(mask, nil)
+	require.NoError(t, err)
+	require.Equal(t, color.NRGBA{0, 0, 0, 255}, im.NRGBAAt(0, 0))
+	require.Equal(t, uint8(0), im.NRGBAAt(1, 0).A)
+	s := stream(2, 1, 8, "DeviceRGB", []byte{255, 0, 0, 0, 255, 0})
+	s.Dict().SetFor("Mask", mask)
+	im, _, err = Decode(s, nil)
+	require.NoError(t, err)
+	require.Equal(t, color.NRGBA{255, 0, 0, 255}, im.NRGBAAt(0, 0))
+	require.Equal(t, uint8(0), im.NRGBAAt(1, 0).A)
+}
+func TestJPEGDecodeArray(t *testing.T) {
+	var b bytes.Buffer
+	src := image.NewGray(image.Rect(0, 0, 1, 1))
+	src.SetGray(0, 0, color.Gray{Y: 0})
+	require.NoError(t, jpeg.Encode(&b, src, nil))
+	s := stream(1, 1, 8, "DeviceGray", b.Bytes())
+	s.Dict().SetNewNameFor("Filter", "DCTDecode")
+	a := objects.NewArray()
+	a.Append(objects.NewNumberFromInt(1))
+	a.Append(objects.NewNumberFromInt(0))
+	s.Dict().SetFor("Decode", a)
+	im, raw, err := Decode(s, nil)
+	require.NoError(t, err)
+	require.Nil(t, raw)
+	require.Equal(t, color.NRGBA{255, 255, 255, 255}, im.NRGBAAt(0, 0))
+}
+
+func TestInlineStencilDecodeInversion(t *testing.T) {
+	images, err := InlineImages([]byte("BI /W 2 /H 1 /IM true /D [1 0] ID \x40 EI"), nil)
+	require.NoError(t, err)
+	require.Len(t, images, 1)
+	im, _, err := Decode(images[0], nil)
+	require.NoError(t, err)
+	require.Equal(t, uint8(0), im.NRGBAAt(0, 0).A)
+	require.Equal(t, uint8(255), im.NRGBAAt(1, 0).A)
+}
+
+func TestSoftMaskMatte(t *testing.T) {
+	s := stream(1, 1, 8, "DeviceRGB", []byte{127, 127, 127})
+	mask := stream(1, 1, 8, "DeviceGray", []byte{128})
+	a := objects.NewArray()
+	for i := 0; i < 3; i++ {
+		a.Append(objects.NewNumberFromInt(1))
+	}
+	mask.Dict().SetFor("Matte", a)
+	s.Dict().SetFor("SMask", mask)
+	im, _, err := Decode(s, nil)
+	require.NoError(t, err)
+	require.Equal(t, color.NRGBA{0, 0, 0, 128}, im.NRGBAAt(0, 0))
+}

@@ -4,11 +4,9 @@
 package image
 
 import (
-	"bytes"
 	"fmt"
 	"image"
 	"image/color"
-	"image/jpeg"
 	"math"
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
@@ -32,9 +30,6 @@ func decode(stream *objects.Stream, resources *objects.Dictionary, seen map[*obj
 	if w <= 0 || h <= 0 || w > 131071 || h > 131071 || uint64(w)*uint64(h) > 25000000 {
 		return nil, nil, fmt.Errorf("image: invalid or excessive dimensions %dx%d", w, h)
 	}
-	if d.GetBooleanFor("ImageMask", false) {
-		return nil, nil, fmt.Errorf("image: stencil requires a painting color")
-	}
 	data, terminal, err := objects.DecodeImageData(stream)
 	if err != nil {
 		return nil, nil, err
@@ -49,7 +44,7 @@ func decode(stream *objects.Stream, resources *objects.Dictionary, seen map[*obj
 		copyDict := objects.ToDictionary(d.Clone())
 		copyDict.SetNewNameFor("ColorSpace", "DeviceGray")
 		copyDict.SetFor("BitsPerComponent", objects.NewNumberFromInt(1))
-		pixels, err = decodeSamples(data, copyDict, resources, w, h)
+		pixels, err = decodeRaw(data, copyDict, resources, w, h)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -57,40 +52,20 @@ func decode(stream *objects.Stream, resources *objects.Dictionary, seen map[*obj
 		if terminal != "DCTDecode" && terminal != "DCT" {
 			return nil, nil, fmt.Errorf("image: unsupported terminal codec %s", terminal)
 		}
-		if d.KeyExist("Mask") {
-			return nil, nil, fmt.Errorf("image: JPEG color-key masks are unsupported")
+		pixels, err = decodeJPEG(data, d, resources, w, h)
+		if err != nil {
+			return nil, nil, err
 		}
-		if d.KeyExist("Decode") {
-			return nil, nil, fmt.Errorf("image: JPEG decode arrays are unsupported")
+		if !d.KeyExist("Decode") && !d.KeyExist("Mask") {
+			original = data
 		}
-		cfg, e := jpeg.DecodeConfig(bytes.NewReader(data))
-		if e != nil {
-			return nil, nil, fmt.Errorf("image: invalid JPEG: %w", e)
-		}
-		if cfg.Width != w || cfg.Height != h {
-			return nil, nil, fmt.Errorf("image: JPEG dimensions differ from dictionary")
-		}
-		decoded, e := jpeg.Decode(bytes.NewReader(data))
-		if e != nil {
-			return nil, nil, e
-		}
-		pixels = image.NewNRGBA(image.Rect(0, 0, w, h))
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
-				pixels.Set(x, y, decoded.At(x, y))
-			}
-		}
-		original = data
 	} else {
-		pixels, err = decodeSamples(data, d, resources, w, h)
+		pixels, err = decodeRaw(data, d, resources, w, h)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
 	if mask := d.GetStreamFor("SMask"); mask != nil {
-		if d.KeyExist("Matte") || mask.Dict().KeyExist("Matte") {
-			return nil, nil, fmt.Errorf("image: soft-mask matte is unsupported")
-		}
 		alpha, _, e := decode(mask, resources, seen)
 		if e != nil {
 			return nil, nil, e
@@ -104,10 +79,32 @@ func decode(stream *objects.Stream, resources *objects.Dictionary, seen map[*obj
 				pixels.Pix[i+3] = color.GrayModel.Convert(alpha.At(x, y)).(color.Gray).Y
 			}
 		}
+		if matte := mask.Dict().GetArrayFor("Matte"); matte != nil {
+			if e := removeMatte(pixels, matte, d, resources); e != nil {
+				return nil, nil, e
+			}
+		}
 		original = nil
 	}
-	if d.GetStreamFor("Mask") != nil {
-		return nil, nil, fmt.Errorf("image: explicit stencil mask is unsupported")
+	if d.GetStreamFor("SMask") == nil {
+		if mask := d.GetStreamFor("Mask"); mask != nil {
+			if !mask.Dict().GetBooleanFor("ImageMask", false) {
+				return nil, nil, fmt.Errorf("image: explicit mask is not a stencil")
+			}
+			alpha, _, e := decode(mask, resources, seen)
+			if e != nil {
+				return nil, nil, e
+			}
+			if alpha.Bounds() != pixels.Bounds() {
+				return nil, nil, fmt.Errorf("image: mask dimensions differ")
+			}
+			for y := 0; y < h; y++ {
+				for x := 0; x < w; x++ {
+					pixels.Pix[pixels.PixOffset(x, y)+3] = alpha.NRGBAAt(x, y).A
+				}
+			}
+			original = nil
+		}
 	}
 	return pixels, original, nil
 }
@@ -118,6 +115,7 @@ type space struct {
 	palette    []byte
 	base       *space
 	high       int
+	transform  func([]float64) color.NRGBA
 }
 
 func colorSpace(obj objects.Object, resources *objects.Dictionary, seen map[objects.Object]bool) (*space, error) {
@@ -141,6 +139,13 @@ func colorSpace(obj objects.Object, resources *objects.Dictionary, seen map[obje
 				return colorSpace(cs.GetObjectFor(n.GetString()), resources, seen)
 			}
 		}
+	}
+	if a := objects.ToArray(obj); a != nil && a.Len() == 2 && a.GetByteStringAt(0) == "ICCBased" {
+		profile := objects.ToStream(a.GetDirectObjectAt(1))
+		if profile == nil {
+			return nil, fmt.Errorf("image: invalid ICCBased profile")
+		}
+		return iccSpace(profile)
 	}
 	if a := objects.ToArray(obj); a != nil && a.Len() >= 4 && a.GetByteStringAt(0) == "Indexed" {
 		base, e := colorSpace(a.GetObjectAt(1), resources, seen)
@@ -240,6 +245,9 @@ func bits(data []byte, pos, n int) int {
 }
 func unit(v float64) uint8 { return uint8(math.Round(math.Max(0, math.Min(1, v)) * 255)) }
 func (s *space) rgb(v []float64) color.NRGBA {
+	if s.transform != nil {
+		return s.transform(v)
+	}
 	switch s.name {
 	case "gray":
 		g := unit(v[0])
