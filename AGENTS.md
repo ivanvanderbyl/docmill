@@ -1,5 +1,65 @@
 # Agent Guidance
 
+## Start Here
+
+Read [the documentation index](docs/README.md) to find the relevant public
+contract. For work in a consuming application, follow
+[the consumer agent guide](docs/agent-consumers.md).
+
+Before editing, inspect the branch, the diff against its base, and the current
+working tree. Preserve unrelated changes. When another agent owns active work,
+keep shared-file edits coordinated and stage only your own changes.
+
+## Code and Documentation Map
+
+| Area | Purpose |
+| --- | --- |
+| `pkg/parser` | Public native backend and PDF operations. |
+| `pkg/parser/internal` | PDF objects, syntax, encryption, document structure, page content, fonts, and text decoding. |
+| `pkg/pdf` | Backend interfaces, extraction options, reading order, and document assembly. |
+| `pkg/table`, `pkg/render` | Table reconstruction and Markdown output. |
+| `pkg/page`, `pkg/geom`, `pkg/textline`, `pkg/forms` | Shared extraction, geometry, text-line, and form helpers. |
+| `cmd/docmill` | CLI commands; check dispatch and help before documenting a command. |
+| `docs/integration.md`, `docs/pdf-operations.md`, `docs/signatures.md` | Public integration contracts. |
+| `docs/plans`, `docs/research` | Historical designs and investigations; verify against implemented code. |
+
+Update the relevant public guide when an exported API, default, error, or output
+contract changes. Keep executable examples consistent with the module's Go
+version and compile them before handoff. Use relative links in repository docs.
+Do not describe a checkout-only API as released without checking availability
+in the consumer's pinned version.
+
+## Integration Contracts
+
+- Keep `pkg/pdf` backend interfaces distinct from extra methods on native
+  `*parser.Document` and `*parser.Page` values.
+- Preserve zero-based page indices, exclusive range ends, duplicate-page order,
+  and the documented meaning of nil selections.
+- Preserve the difference between default Markdown extraction and explicitly
+  supplied boolean options.
+- Document whole-document rewrites, page-copy exclusions, plaintext output from
+  encrypted inputs, and signature consequences alongside affected operations.
+- Preserve public error identities and distinguish unsupported input from empty
+  successful output. Test saved output by reopening it when serialization changes.
+- Keep read-only concurrency separate from mutation safety. Retain the race
+  regressions when changing parser state, caches, or serialization.
+- Keep signature inspection, integrity, certificate trust, and document coverage
+  distinct. Follow the signature guide for the specific operation being changed.
+
+## Go Coding Style
+
+Apply these rules to handwritten Go code, including tests and examples.
+
+- Use idiomatic Go 1.27 language and standard-library helpers when they simplify code and preserve behaviour.
+- Write function, method, and anonymous-function bodies on multiple lines, including trivial accessors and empty marker methods. Put named struct definitions on multiple lines. Keep ordinary `struct{}` channel and set types and values compact.
+- Separate top-level declarations and distinct logical steps with blank lines. Expand long composite literals so their fields and nested values are easy to scan. Avoid multiple statements on one line.
+- Keep functions small and focused. Prefer early returns and shallow control flow. Extract cohesive operations into clearly named helpers when that makes the caller easier to understand.
+- Keep cyclomatic complexity at or below 15 for each new or changed function, including tests and anonymous functions. Treat 15 as a ceiling, not a target.
+- Comment sparingly. Explain non-obvious contracts, ordering, concurrency, or resource ownership. Remove comments that only repeat the code. Preserve required directives and useful API documentation.
+- Before committing Go changes, run `go fix ./...` from the repository root. Review its changes and run the relevant checks. This repository has one Go module.
+- Run `gofmt` on changed Go files before committing. Run `task check` for formatting, vet, and tests across the module.
+- Change generators or their inputs when generated code needs to change. Do not hand-edit generated output to enforce this style.
+
 ## Optimisation Principles
 
 This project is building a generalised PDF to Markdown converter. Optimisations must improve real-world extraction, not just local benchmark scores. The target is state-of-the-art latency per page and accuracy for text, tables, headings, lists, formatting, and reading order across a broad range of documents.
@@ -15,6 +75,18 @@ Speed improvements must preserve output quality. A latency change is not accepta
 When adding heuristics, document the general invariant they encode, add tests that cover both positive and negative cases, and smoke-test on real PDFs when the change affects extraction behaviour. Prefer conservative detection with clear false-positive guards over broad rules that look good on one corpus but fail on prose-heavy or unusual documents.
 
 ## Validation
+
+For documentation-only work, check local links and compile changed Go examples.
+Use the native benchmark protocol when a change may affect the runner's speed or output.
+
+For Go changes, run affected package tests while iterating and `task check`
+before handoff. Run `go test -race ./...` for shared-state, cache, concurrency,
+or serialization changes. Use synthetic PDFs to isolate contracts and real PDFs
+to check extraction or export changes. Report any skipped fixture-dependent
+checks and distinguish unit evidence from corpus or external-validator evidence.
+
+Make focused signed commits after verified increments. Preserve unrelated staged
+and unstaged changes. Do not disable signing when the signing service is unavailable.
 
 ### Native Runner Performance Benchmark
 

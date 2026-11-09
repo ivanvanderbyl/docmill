@@ -20,16 +20,22 @@ func (d *Document) WritePDF(w io.Writer) error {
 	}
 
 	objs, lastObjNum := d.objectsForWrite()
+	if err := d.prs.DecryptionError(); err != nil {
+		return err
+	}
 	if lastObjNum == 0 {
 		return fmt.Errorf("write PDF: no indirect objects")
 	}
 
+	return writePDFObjects(w, objs, lastObjNum, d.prs.FileVersion(), d.trailerForWrite(lastObjNum))
+}
+
+func writePDFObjects(w io.Writer, objs map[uint32]objects.Object, lastObjNum uint32, version int, trailer *objects.Dictionary) error {
 	var buf bytes.Buffer
-	version := d.prs.FileVersion()
 	if version <= 0 {
 		version = 14
 	}
-	fmt.Fprintf(&buf, "%%PDF-%d.%d\n", version/10, version%10)
+	fmt.Fprintf(&buf, "%%PDF-%d.%d\r\n%%\xA1\xB3\xC5\xD7\r\n", version/10, version%10)
 
 	offsets := make([]int64, int(lastObjNum)+1)
 	for objNum := uint32(1); objNum <= lastObjNum; objNum++ {
@@ -45,21 +51,23 @@ func (d *Document) WritePDF(w io.Writer) error {
 
 	xrefOffset := buf.Len()
 	fmt.Fprintf(&buf, "xref\r\n0 %d\r\n", lastObjNum+1)
-	buf.WriteString("0000000000 65535 f \r\n")
+	buf.WriteString("0000000000 65535 f\r\n")
 	for objNum := uint32(1); objNum <= lastObjNum; objNum++ {
 		if offsets[objNum] == 0 {
-			buf.WriteString("0000000000 65535 f \r\n")
+			buf.WriteString("0000000000 65535 f\r\n")
 			continue
 		}
-		fmt.Fprintf(&buf, "%010d 00000 n \r\n", offsets[objNum])
+		fmt.Fprintf(&buf, "%010d 00000 n\r\n", offsets[objNum])
 	}
 
-	trailer := d.trailerForWrite(lastObjNum)
 	buf.WriteString("trailer\r\n")
 	writePDFObjectBody(&buf, trailer, map[objects.Object]bool{})
 	fmt.Fprintf(&buf, "\r\nstartxref\r\n%d\r\n%%%%EOF\r\n", xrefOffset)
 
-	_, err := w.Write(buf.Bytes())
+	n, err := w.Write(buf.Bytes())
+	if err == nil && n != buf.Len() {
+		return io.ErrShortWrite
+	}
 	return err
 }
 
@@ -75,7 +83,14 @@ func (d *Document) objectsForWrite() (map[uint32]objects.Object, uint32) {
 		if obj == nil {
 			continue
 		}
-		obj.SetObjNum(objNum)
+		// A fresh classic xref replaces structural streams, whose old trailer
+		// and compressed-object offsets no longer describe this file.
+		if stream := objects.ToStream(obj); stream != nil {
+			switch stream.Dict().GetNameFor("Type") {
+			case "XRef", "ObjStm":
+				continue
+			}
+		}
 		out[objNum] = obj
 	}
 	return out, lastObjNum
@@ -197,9 +212,13 @@ func writePDFStream(buf *bytes.Buffer, stream *objects.Stream, visited map[objec
 	acc := objects.NewStreamAcc(stream)
 	acc.LoadAllDataRaw()
 	data := acc.GetSpan()
-	stream.Dict().SetFor("Length", objects.NewNumberFromInt(int32(len(data))))
+	dict := objects.NewDictionary()
+	for _, key := range stream.Dict().GetKeys() {
+		dict.SetFor(key, stream.Dict().GetObjectFor(key))
+	}
+	dict.SetFor("Length", objects.NewNumberFromInt(int32(len(data))))
 
-	writePDFDictionary(buf, stream.Dict(), visited)
+	writePDFDictionary(buf, dict, visited)
 	buf.WriteString("\r\nstream\r\n")
 	buf.Write(data)
 	buf.WriteString("\r\nendstream")

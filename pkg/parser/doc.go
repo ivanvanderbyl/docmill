@@ -7,5 +7,5 @@
 // The parser is assembled bottom-up from the internal packages, mirroring
 // PDFium's layering: crt -> codec/objects -> syntax -> parser -> document ->
 // page -> font -> text. (PDFium's crypto layer sits between parser and
-// document; encrypted PDFs are unsupported until plan 009 Phase E lands.)
+// document; standard-security encrypted PDFs can be opened with OpenBytesWithPassword.)
 package parser

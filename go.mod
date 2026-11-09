@@ -1,9 +1,10 @@
 module github.com/ivanvanderbyl/docmill/v2
 
-go 1.26.1
+go 1.27
 
 require (
 	github.com/benoitkugler/textlayout v0.3.2
+	github.com/digitorus/pkcs7 v0.0.0-20261104125046-a476de3098e4
 	github.com/go-text/typesetting v0.3.4
 	github.com/ivanvanderbyl/markdown v0.0.0-20250929060503-be71f71ce2ef
 	github.com/klippa-app/go-pdfium v1.19.4

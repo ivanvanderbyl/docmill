@@ -76,14 +76,26 @@ func (n *Name) GetUnicodeText() string { return decodePDFText(n.name) }
 
 type Number struct {
 	baseObject
-	value crt.Number
+	value        crt.Number
+	sourceLexeme string
 }
 
 func NewNumberFromInt(value int32) *Number { return &Number{value: crt.NumberFromInt(value)} }
 func NewNumberFromFloat(value float32) *Number {
 	return &Number{value: crt.NumberFromFloat(value)}
 }
-func NewNumberFromString(s string) *Number { return &Number{value: crt.NumberFromString(s)} }
+func NewNumberFromString(s string) *Number {
+	return &Number{value: crt.NumberFromString(s), sourceLexeme: s}
+}
+
+// SourceLexeme retains the original spelling for consumers that need integers
+// wider than the PDFium-compatible numeric model, such as signature byte ranges.
+func (n *Number) SourceLexeme() string {
+	if n.sourceLexeme != "" {
+		return n.sourceLexeme
+	}
+	return n.GetString()
+}
 
 func (n *Number) Type() ObjectType   { return TypeNumber }
 func (n *Number) IsInteger() bool    { return n.value.IsInteger() }
@@ -122,11 +134,24 @@ func formatFloat(f float32) string {
 
 type String struct {
 	baseObject
-	data  string // raw decoded bytes (not the escaped literal)
-	isHex bool
+	data        string // raw decoded bytes (not the escaped literal)
+	isHex       bool
+	sourceStart int64
+	sourceEnd   int64
+	hasSource   bool
 }
 
 func NewString(data string, isHex bool) *String { return &String{data: data, isHex: isHex} }
+
+// SetSourceRange records the original file token, including its delimiters.
+func (s *String) SetSourceRange(start, end int64) {
+	s.sourceStart = start
+	s.sourceEnd = end
+	s.hasSource = true
+}
+
+// SourceRange is absent for new, cloned, or object-stream strings.
+func (s *String) SourceRange() (int64, int64, bool) { return s.sourceStart, s.sourceEnd, s.hasSource }
 
 func (s *String) Type() ObjectType { return TypeString }
 func (s *String) IsHex() bool      { return s.isHex }

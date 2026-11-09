@@ -6,6 +6,7 @@ package document
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/parser"
@@ -17,20 +18,28 @@ const kPageMaxNum = 0xFFFFF // 1048575
 type Document struct {
 	*parser.Holder
 	prs      *parser.Parser
+	source   []byte
 	rootDict *objects.Dictionary
 	pageList []uint32
-	// pageMu guards the lazy page-tree resolution in GetPageDict: the pageList
-	// cache and getNodeType's in-place /Type normalisation of shared page-tree
-	// dictionaries. Pages are extracted from many goroutines at once.
-	pageMu sync.Mutex
+	// pageMu guards the lazy page-list cache in GetPageDict. Page classification
+	// does not mutate shared dictionaries during concurrent extraction.
+	pageMu  sync.Mutex
+	changed atomic.Bool
 }
 
 // Open parses buf and returns the document (with the parser error code).
 func Open(buf []byte) (*Document, parser.Error) {
+	return OpenWithPassword(buf, "")
+}
+
+// OpenWithPassword parses a document with its user or owner password.
+func OpenWithPassword(buf []byte, password string) (*Document, parser.Error) {
 	p := parser.New()
+	p.SetPassword(password)
 	h := parser.NewHolder(p)
-	d := &Document{Holder: h, prs: p}
-	err := p.StartParse(buf, d)
+	source := append([]byte(nil), buf...)
+	d := &Document{Holder: h, prs: p, source: source}
+	err := p.StartParse(source, d)
 	return d, err
 }
 
@@ -46,7 +55,9 @@ func (d *Document) TryInit() bool {
 }
 
 // GetPageCount returns the number of pages.
-func (d *Document) GetPageCount() int { return len(d.pageList) }
+func (d *Document) GetPageCount() int {
+	return len(d.pageList)
+}
 
 // GetPageDict returns the page dictionary for page index, resolving it via the
 // /Kids leaf traversal (in document order) and caching the object number.
@@ -151,12 +162,10 @@ func getNodeType(dict *objects.Dictionary) int {
 	case "Page":
 		return nodeLeaf
 	}
-	// Malformed node with no /Type: guess from /Kids and normalize in place.
+	// Malformed nodes use /Kids for classification without mutating the source.
 	if dict.KeyExist("Kids") {
-		dict.SetNewNameFor("Type", "Pages")
 		return nodeBranch
 	}
-	dict.SetNewNameFor("Type", "Page")
 	return nodeLeaf
 }
 
@@ -199,4 +208,14 @@ func (d *Document) countPages(pagesDict *objects.Dictionary, visited map[*object
 func isValidPageObject(obj objects.Object) bool {
 	dict := objects.ToDictionary(obj)
 	return dict != nil && dict.GetNameFor("Type") == "Page"
+}
+
+// IsEncrypted reports whether the source document had an encryption dictionary.
+func (d *Document) IsEncrypted() bool {
+	return d.prs.IsEncrypted()
+}
+
+// DecryptionError reports a lazy object decryption failure.
+func (d *Document) DecryptionError() error {
+	return d.prs.DecryptionError()
 }

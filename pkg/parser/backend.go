@@ -2,7 +2,6 @@ package parser
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -19,26 +18,23 @@ import (
 
 // Backend is the native pure-Go pkg/pdf.Backend (plan 009): document loading,
 // page sizing, and text extraction with no cgo or external PDFium dependency.
-type Backend struct{}
+type Backend struct {
+}
 
 // NewBackend returns the native backend.
-func NewBackend() docpdf.Backend { return &Backend{} }
+func NewBackend() docpdf.Backend {
+	return &Backend{}
+}
 
 // OpenBytes parses data into a Document.
 func (b *Backend) OpenBytes(ctx context.Context, data []byte) (docpdf.Document, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	buf := append([]byte(nil), data...)
-	doc, perr := document.Open(buf)
-	if perr != parser.Success {
-		return nil, parserError(perr)
-	}
-	return &Document{doc: doc}, nil
+	return b.OpenBytesWithPassword(ctx, data, "")
 }
 
 // Close releases the backend (no shared resources).
-func (b *Backend) Close() error { return nil }
+func (b *Backend) Close() error {
+	return nil
+}
 
 // Document wraps the native document.
 type Document struct {
@@ -63,14 +59,20 @@ func (d *Document) Page(ctx context.Context, index int) (docpdf.Page, error) {
 }
 
 // Close releases the document.
-func (d *Document) Close() error { return nil }
+func (d *Document) Close() error {
+	return nil
+}
 
 // AcroFormValues returns every terminal AcroForm field as field name -> value.
 func (d *Document) AcroFormValues(ctx context.Context) (map[string]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return d.doc.AcroFormFieldValues(), nil
+	if d == nil || d.doc == nil {
+		return nil, fmt.Errorf("native pkg/parser: nil document")
+	}
+	values := d.doc.AcroFormFieldValues()
+	return values, d.doc.DecryptionError()
 }
 
 // SetAcroFormValues updates terminal AcroForm field values by field name.
@@ -78,7 +80,14 @@ func (d *Document) SetAcroFormValues(ctx context.Context, values map[string]stri
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	return d.doc.SetAcroFormFieldValues(values)
+	if d == nil || d.doc == nil {
+		return 0, fmt.Errorf("native pkg/parser: nil document")
+	}
+	count, err := d.doc.SetAcroFormFieldValues(values)
+	if err != nil {
+		return count, err
+	}
+	return count, d.doc.DecryptionError()
 }
 
 // WritePDF serialises the current native document state to w.
@@ -106,6 +115,9 @@ type Page struct {
 
 // load resolves the page dict and builds the native page interpreter result.
 func (p *Page) load() (*pdfpage.Page, geom.Size, error) {
+	if p == nil || p.doc == nil {
+		return nil, geom.Size{}, fmt.Errorf("native pkg/parser: nil page")
+	}
 	p.loadOnce.Do(func() {
 		dict := p.doc.GetPageDict(p.index)
 		if dict == nil {
@@ -113,6 +125,10 @@ func (p *Page) load() (*pdfpage.Page, geom.Size, error) {
 			return
 		}
 		p.page = pdfpage.LoadPage(dict, p.doc)
+		if err := p.doc.DecryptionError(); err != nil {
+			p.loadErr = err
+			return
+		}
 		p.size = geom.Size{Width: float64(p.page.Width()), Height: float64(p.page.Height())}
 	})
 	return p.page, p.size, p.loadErr
@@ -367,10 +383,10 @@ func (p *Page) RulingSegments(ctx context.Context) ([]docpage.RulingSegment, err
 func parserError(e parser.Error) error {
 	switch e {
 	case parser.PasswordError:
-		return errors.New("native pkg/parser: password required")
+		return ErrPasswordRequired
 	case parser.HandlerError:
-		return errors.New("native pkg/parser: encrypted PDF unsupported (plan 009 Phase E)")
+		return ErrUnsupportedEncryption
 	default:
-		return errors.New("native pkg/parser: failed to parse PDF (FORMAT_ERROR)")
+		return ErrInvalidPDF
 	}
 }

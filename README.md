@@ -3,29 +3,29 @@
 **Fast, deterministic PDF → Markdown in pure Go.**
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/ivanvanderbyl/docmill/v2.svg)](https://pkg.go.dev/github.com/ivanvanderbyl/docmill/v2)
-![Go 1.26+](https://img.shields.io/badge/go-1.26%2B-00ADD8)
+![Go 1.27+](https://img.shields.io/badge/go-1.27%2B-00ADD8)
 ![License BSL 1.1](https://img.shields.io/badge/license-BSL%201.1-blue)
 
 docmill converts born-digital PDFs to clean Markdown — headings, paragraphs,
 lists, and tables — without a network call, an ML model, or a line of cgo. It
 ports the deterministic core of [Docling](https://github.com/docling-project/docling)
 to Go and drives it with a from-scratch, pure-Go PDF parsing engine modelled on
-[PDFium](https://pdfium.googlesource.com/pdfium/). The result is a single static
-binary that converts a page in tens of milliseconds and produces the same output
-every time.
+[PDFium](https://pdfium.googlesource.com/pdfium/). The default converter runs without
+a PDFium shared library. It extracts embedded text and reconstructs document
+structure using deterministic algorithms.
 
-Every layout decision is algorithmic and explainable. docmill infers structure
-from geometry, font metrics, and spacing — never from the literal words on the
-page — so it generalises across documents instead of overfitting a corpus.
+Layout extraction uses geometry, font metrics, spacing, and document structure.
+Supported formats and extraction limits are described in the
+[integration guide](docs/integration.md).
 
 ## Highlights
 
 - **Pure Go, no cgo.** The converter needs no PDFium shared library and no build
   toolchain beyond `go`. `go install` gives you a static binary.
-- **Fast.** ~26 ms/page on born-native PDFs — the quickest tool in the DPBench
-  cross-tool comparison by a wide margin. See [Benchmarks](#benchmarks).
-- **Deterministic.** The same PDF always yields byte-identical Markdown. No
-  sampling, no model weights, no hidden state.
+- **Measured performance.** Dated DPBench reports record extraction quality and
+  latency for specific versions and hardware. See [Benchmarks](#benchmarks).
+- **Deterministic extraction.** No model weights or sampling. Pin the version
+  and extraction options when comparing output.
 - **Structure-aware.** Reading-order recovery, paragraph assembly, font-driven
   heading levels (nested coherently across pages), list detection, and
   borderless-table reconstruction — all on by default.
@@ -34,8 +34,21 @@ page — so it generalises across documents instead of overfitting a corpus.
   span a page break.
 - **AcroForm support.** Export field values, export field geometry and labels,
   or fill a form and write a new PDF.
-- **Observable.** Optional OpenTelemetry traces and metrics, off by default with
-  zero overhead.
+- **Observable.** Optional OpenTelemetry traces and metrics, disabled by default.
+
+## Documentation
+
+| Reader or task | Start here |
+| --- | --- |
+| Integrate the Go library | [Integration guide](docs/integration.md) |
+| Agent updating a consuming application | [Consumer agent guide](docs/agent-consumers.md) |
+| Copy pages, extract images, or handle encrypted files | [Native PDF operations](docs/pdf-operations.md) |
+| Place images or work with digital signatures | [Signature guide](docs/signatures.md) |
+| Change Docmill itself | [Repository guidance](AGENTS.md) |
+
+See the [documentation index](docs/README.md) for validation reports and reference material.
+The docs in a checkout describe that checkout. Check your pinned module version
+before relying on a newly added API.
 
 ## Install
 
@@ -94,11 +107,19 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	if err := run(context.Background(), os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
 
-	data, err := os.ReadFile("input.pdf")
+func run(ctx context.Context, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: convert input.pdf")
+	}
+	data, err := os.ReadFile(args[0])
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("read PDF: %w", err)
 	}
 
 	backend := parser.NewBackend()
@@ -106,23 +127,32 @@ func main() {
 
 	doc, err := backend.OpenBytes(ctx, data)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("open PDF: %w", err)
 	}
 	defer doc.Close()
 
 	markdown, err := pdf.ExtractMarkdown(ctx, doc)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("extract Markdown: %w", err)
 	}
-
-	fmt.Print(markdown)
+	_, err = fmt.Fprint(os.Stdout, markdown)
+	return err
 }
 ```
 
 `pdf.ExtractMarkdown` turns on reading order, structure, headings, and table
-detection. Use `pdf.ExtractMarkdownWithOptions` for finer control — for example
-to opt into inline bold/italic/code formatting or to bound page-level
-parallelism.
+detection. `pdf.ExtractMarkdownWithOptions` takes explicit options rather than
+merging them with these defaults. See [extraction options](docs/integration.md#set-extraction-options-explicitly)
+for inline formatting and bounded page concurrency.
+
+### Other PDF operations
+
+The native parser also supports page copying and merging, embedded-image
+extraction, attachment metadata, and standard password encryption. See
+[Native PDF operations](docs/pdf-operations.md) for APIs, indexing conventions,
+validation checks, and supported formats.
+[Signature images and verification](docs/signatures.md) covers image placement,
+PDF digital signatures, and certificate trust.
 
 ## How it works
 
@@ -140,8 +170,8 @@ pipeline over the text cells a backend returns:
 
 The default backend, `pkg/parser`, is a bottom-up pure-Go port of PDFium's
 parsing stack — object parsing, cross-reference tables, content streams, font
-and encoding handling, and Unicode mapping — that reproduces PDFium's behaviour
-on malformed input rather than rejecting it.
+and encoding handling, and Unicode mapping — that follows PDFium's parsing model
+where supported, including recovery paths for malformed input.
 
 ### Packages
 
@@ -159,7 +189,8 @@ on malformed input rather than rejecting it.
 
 ## Benchmarks
 
-Measured on 200 born-native PDFs from the
+The following historical cross-tool snapshot was recorded on 22 June 2026,
+using 200 born-native PDFs from the
 [`docling-project/docling-dpbench`](https://huggingface.co/datasets/docling-project/docling-dpbench)
 corpus (arm64, image-only PDFs excluded). All scores are normalised to `[0, 1]`;
 higher is better.
@@ -174,15 +205,16 @@ higher is better.
 | pypdf | 0.88 | 0.00 | 0.49 | 0.00 | 85 |
 | opendataloader | 0.69 | 0.23 | 0.71 | 0.65 | 251 |
 
-docmill leads on extraction accuracy and heading level while running 3–200×
-faster than every other tool measured. Reading order (NID) is the current weak
-spot and the focus of ongoing work. Reproduce the numbers and see the full tool
-set in [`benchmarks/dpbench/`](benchmarks/dpbench/README.md).
+These numbers describe that run, not current releases of every tool. See the
+[original report](docs/benchmarks/dpbench.md), the more recent
+[native-operation comparison](docs/benchmarks/2026-11-09-native-pdf-operations.md),
+and the [reproduction workflow](benchmarks/dpbench/README.md). Compare runs only
+when their corpus, scoring, tool configuration, and hardware match.
 
 ## Observability
 
 docmill is instrumented with OpenTelemetry traces and metrics exported over
-OTLP/HTTP. It is a no-op — and adds zero overhead — unless you enable it:
+OTLP/HTTP. Export is disabled unless you enable it:
 
 ```bash
 export DOCMILL_OTEL=1
@@ -197,8 +229,9 @@ Setup, the span and metric reference, and an importable Grafana dashboard live i
 ## Limitations
 
 docmill targets born-digital PDFs. It does not yet handle scanned or image-only
-pages (no OCR), encrypted PDFs, mathematical formulas, embedded-image
-extraction, or hyperlinks.
+pages for text extraction (no OCR), mathematical formulas, or hyperlinks.
+Image extraction and encrypted documents have format-specific limits listed in
+[Native PDF operations](docs/pdf-operations.md).
 
 ## Development
 
@@ -215,7 +248,7 @@ go test ./... -count=1
 docmill stands on two open projects: the
 [Docling](https://github.com/docling-project/docling) document-conversion core
 (MIT) and Google's [PDFium](https://pdfium.googlesource.com/pdfium/) (BSD),
-whose parsing behaviour the native engine mirrors.
+whose parsing behaviour informs the native engine.
 
 ## License
 

@@ -4,6 +4,7 @@ package parser
 
 import (
 	"bytes"
+	"sync/atomic"
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/syntax"
@@ -29,6 +30,9 @@ type ParsedObjectsHolder interface {
 
 // Parser ports CPDF_Parser.
 type Parser struct {
+	password         string
+	security         *securityHandler
+	decryptionErr    atomic.Pointer[error]
 	syntax           *syntax.SyntaxParser
 	objectsHolder    ParsedObjectsHolder
 	hasParsed        bool
@@ -52,13 +56,19 @@ func New() *Parser {
 }
 
 // XRefTableRebuilt reports whether the xref had to be reconstructed.
-func (p *Parser) XRefTableRebuilt() bool { return p.xrefTableRebuilt }
+func (p *Parser) XRefTableRebuilt() bool {
+	return p.xrefTableRebuilt
+}
 
 // GetLinearizedHeader returns the linearization header, or nil.
-func (p *Parser) GetLinearizedHeader() *LinearizedHeader { return p.linearized }
+func (p *Parser) GetLinearizedHeader() *LinearizedHeader {
+	return p.linearized
+}
 
 // FileVersion returns the parsed PDF header version encoded as major*10+minor.
-func (p *Parser) FileVersion() int { return p.fileVersion }
+func (p *Parser) FileVersion() int {
+	return p.fileVersion
+}
 
 // --- accessors ---
 
@@ -71,10 +81,14 @@ func (p *Parser) GetLastObjNum() uint32 {
 }
 
 // IsValidObjectNumber reports whether objnum is within the table's range.
-func (p *Parser) IsValidObjectNumber(objnum uint32) bool { return objnum <= p.GetLastObjNum() }
+func (p *Parser) IsValidObjectNumber(objnum uint32) bool {
+	return objnum <= p.GetLastObjNum()
+}
 
 // GetTrailer returns the trailer dictionary.
-func (p *Parser) GetTrailer() *objects.Dictionary { return p.crossRefTable.Trailer() }
+func (p *Parser) GetTrailer() *objects.Dictionary {
+	return p.crossRefTable.Trailer()
+}
 
 // GetRootObjNum returns the /Root object number, or kInvalidObjNum.
 func (p *Parser) GetRootObjNum() uint32 {
@@ -115,16 +129,18 @@ func (p *Parser) getEncryptDict() *objects.Dictionary {
 	return nil
 }
 
-// setEncryptHandler is a Phase-D stub: encryption is unsupported until Phase E,
-// so an /Encrypt entry is a hard failure (no corpus PDF is encrypted).
 func (p *Parser) setEncryptHandler() Error {
-	if p.GetTrailer() == nil {
-		return FormatError
-	}
-	if p.getEncryptDict() != nil {
-		return HandlerError
-	}
-	return Success
+	return p.initSecurity()
+}
+
+// SetPassword selects the user or owner password before parsing.
+func (p *Parser) SetPassword(password string) {
+	p.password = password
+}
+
+// IsEncrypted reports a successfully loaded encryption dictionary.
+func (p *Parser) IsEncrypted() bool {
+	return p.security != nil
 }
 
 // --- init / version ---
@@ -303,4 +319,12 @@ func (p *Parser) loadTrailer() *objects.Dictionary {
 		return nil
 	}
 	return objects.ToDictionary(p.syntax.GetObjectBody(p.objectsHolder))
+}
+
+// DecryptionError reports malformed ciphertext encountered during lazy loading.
+func (p *Parser) DecryptionError() error {
+	if err := p.decryptionErr.Load(); err != nil {
+		return *err
+	}
+	return nil
 }
