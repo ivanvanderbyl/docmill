@@ -124,6 +124,13 @@ detection. Use `pdf.ExtractMarkdownWithOptions` for finer control — for exampl
 to opt into inline bold/italic/code formatting or to bound page-level
 parallelism.
 
+### Other PDF operations
+
+The native parser also supports page copying and merging, embedded-image
+extraction, attachment metadata, and standard password encryption. See
+[Native PDF operations](docs/pdf-operations.md) for APIs, indexing conventions,
+validation checks, and supported formats.
+
 ## How it works
 
 `pkg/pdf` defines a small `Backend`/`Document`/`Page` contract and runs a fixed
@@ -197,8 +204,9 @@ Setup, the span and metric reference, and an importable Grafana dashboard live i
 ## Limitations
 
 docmill targets born-digital PDFs. It does not yet handle scanned or image-only
-pages (no OCR), encrypted PDFs, mathematical formulas, embedded-image
-extraction, or hyperlinks.
+pages for text extraction (no OCR), mathematical formulas, or hyperlinks.
+Image extraction and encrypted documents have format-specific limits listed in
+[Native PDF operations](docs/pdf-operations.md).
 
 ## Development
 

@@ -27,6 +27,9 @@ func (d *Document) HasActiveContent(ctx context.Context) (bool, error) {
 		if err != nil || found {
 			return found, err
 		}
+		if err := d.DecryptionError(); err != nil {
+			return false, err
+		}
 	}
 	return false, nil
 }

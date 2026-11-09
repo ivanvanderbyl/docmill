@@ -14,5 +14,6 @@ func (d *Document) Attachments(ctx context.Context) ([]Attachment, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return d.doc.Attachments(), nil
+	attachments := d.doc.Attachments()
+	return attachments, d.doc.DecryptionError()
 }
