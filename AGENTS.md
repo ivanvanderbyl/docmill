@@ -1,5 +1,19 @@
 # Agent Guidance
 
+## Go Coding Style
+
+Apply these rules to handwritten Go code, including tests and examples.
+
+- Use idiomatic Go 1.27 language and standard-library helpers when they simplify code and preserve behaviour.
+- Write function, method, and anonymous-function bodies on multiple lines, including trivial accessors and empty marker methods. Put named struct definitions on multiple lines. Keep ordinary `struct{}` channel and set types and values compact.
+- Separate top-level declarations and distinct logical steps with blank lines. Expand long composite literals so their fields and nested values are easy to scan. Avoid multiple statements on one line.
+- Keep functions small and focused. Prefer early returns and shallow control flow. Extract cohesive operations into clearly named helpers when that makes the caller easier to understand.
+- Keep cyclomatic complexity at or below 15 for each new or changed function, including tests and anonymous functions. Treat 15 as a ceiling, not a target.
+- Comment sparingly. Explain non-obvious contracts, ordering, concurrency, or resource ownership. Remove comments that only repeat the code. Preserve required directives and useful API documentation.
+- Before committing Go changes, run `go fix ./...` from the repository root. Review its changes and run the relevant checks. This repository has one Go module.
+- Run `gofmt` on changed Go files before committing. Run `task check` for formatting, vet, and tests across the module.
+- Change generators or their inputs when generated code needs to change. Do not hand-edit generated output to enforce this style.
+
 ## Optimisation Principles
 
 This project is building a generalised PDF to Markdown converter. Optimisations must improve real-world extraction, not just local benchmark scores. The target is state-of-the-art latency per page and accuracy for text, tables, headings, lists, formatting, and reading order across a broad range of documents.
