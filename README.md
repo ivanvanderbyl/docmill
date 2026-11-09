@@ -3,7 +3,7 @@
 **Fast, deterministic PDF → Markdown in pure Go.**
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/ivanvanderbyl/docmill/v2.svg)](https://pkg.go.dev/github.com/ivanvanderbyl/docmill/v2)
-![Go 1.26+](https://img.shields.io/badge/go-1.26%2B-00ADD8)
+![Go 1.27+](https://img.shields.io/badge/go-1.27%2B-00ADD8)
 ![License BSL 1.1](https://img.shields.io/badge/license-BSL%201.1-blue)
 
 docmill converts born-digital PDFs to clean Markdown — headings, paragraphs,
@@ -130,6 +130,8 @@ The native parser also supports page copying and merging, embedded-image
 extraction, attachment metadata, and standard password encryption. See
 [Native PDF operations](docs/pdf-operations.md) for APIs, indexing conventions,
 validation checks, and supported formats.
+[Signature images and verification](docs/signatures.md) covers image placement,
+PDF digital signatures, and certificate trust.
 
 ## How it works
 

@@ -74,7 +74,12 @@ func rasterizeStamp(ctx context.Context, im image.Image) (document.ImageStamp, e
 		return document.ImageStamp{}, fmt.Errorf("image exceeds 16 megapixels")
 	}
 	count := int(width * height)
-	raster := document.ImageStamp{Width: int(width), Height: int(height), RGB: make([]byte, count*3), Alpha: make([]byte, count)}
+	raster := document.ImageStamp{
+		Width:  int(width),
+		Height: int(height),
+		RGB:    make([]byte, count*3),
+		Alpha:  make([]byte, count),
+	}
 	opaque := true
 	for y := range raster.Height {
 		if err := ctx.Err(); err != nil {

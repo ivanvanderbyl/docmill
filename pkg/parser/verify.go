@@ -68,7 +68,12 @@ var ErrInvalidSignatureRange = errors.New("invalid PDF signature byte range")
 var ErrSignatureNotChecked = errors.New("signature check not performed")
 
 func verifySignature(source []byte, signature Signature, options VerifyOptions) SignatureVerification {
-	result := SignatureVerification{Signature: signature, TrustError: ErrSignatureNotChecked, TimestampStatus: VerificationNotChecked, RevocationStatus: VerificationNotChecked}
+	result := SignatureVerification{
+		Signature:        signature,
+		TrustError:       ErrSignatureNotChecked,
+		TimestampStatus:  VerificationNotChecked,
+		RevocationStatus: VerificationNotChecked,
+	}
 	signed, revision, err := signatureContent(source, signature)
 	if err != nil {
 		result.IntegrityError = err
@@ -107,7 +112,12 @@ func verifySignerTrust(cert *x509.Certificate, certificates []*x509.Certificate,
 			intermediates.AddCert(candidate)
 		}
 	}
-	_, err := cert.Verify(x509.VerifyOptions{Roots: options.Roots, Intermediates: intermediates, CurrentTime: options.CurrentTime, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}})
+	_, err := cert.Verify(x509.VerifyOptions{
+		Roots:         options.Roots,
+		Intermediates: intermediates,
+		CurrentTime:   options.CurrentTime,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+	})
 	return err
 }
 
