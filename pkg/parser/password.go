@@ -25,7 +25,7 @@ func (b *Backend) OpenBytesWithPassword(ctx context.Context, data []byte, passwo
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	d, e := document.OpenWithPassword(append([]byte(nil), data...), password)
+	d, e := document.OpenWithPassword(data, password)
 	if e != parser.Success {
 		if e == parser.PasswordError && password != "" {
 			return nil, ErrWrongPassword
