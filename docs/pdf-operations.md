@@ -40,8 +40,19 @@ For password-protected inputs, open each document with its password and use
 
 `doc.ExtractImages(ctx, nil)` extracts images from all pages. Supply zero-based
 page indices to restrict extraction. Each result includes its page index,
-resource name, dimensions, encoding, and encoded bytes. Decode `Data` with Go's
-`image.Decode` after registering the JPEG and PNG decoders.
+resource name, dimensions, encoding, and encoded bytes. Use `Decode()` to obtain a Go `image.Image`, or convert the result directly:
+
+```go
+pngBytes, err := extracted.PNG()
+jpegBytes, err := extracted.JPEG(&jpeg.Options{Quality: 90})
+```
+
+`PNG()` preserves decoded pixels and transparency. `JPEG()` composites onto a
+white background because JPEG has no alpha channel; nil options use Go's
+standard default quality. JPEG encoding is lossy even for JPEG input. Both
+methods decode `Data` rather than trusting the format and dimension fields,
+and omit source metadata such as EXIF and ICC profiles. These methods convert
+already-extracted images; they do not add support for raw PDF codecs.
 
 Image extraction returns image resources rather than a rendered page. Page text,
 vector graphics, clipping, image placement, and blending are not a page preview.
