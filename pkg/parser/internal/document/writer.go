@@ -20,6 +20,9 @@ func (d *Document) WritePDF(w io.Writer) error {
 	}
 
 	objs, lastObjNum := d.objectsForWrite()
+	if err := d.prs.DecryptionError(); err != nil {
+		return err
+	}
 	if lastObjNum == 0 {
 		return fmt.Errorf("write PDF: no indirect objects")
 	}
@@ -32,7 +35,7 @@ func writePDFObjects(w io.Writer, objs map[uint32]objects.Object, lastObjNum uin
 	if version <= 0 {
 		version = 14
 	}
-	fmt.Fprintf(&buf, "%%PDF-%d.%d\n", version/10, version%10)
+	fmt.Fprintf(&buf, "%%PDF-%d.%d\r\n%%\xA1\xB3\xC5\xD7\r\n", version/10, version%10)
 
 	offsets := make([]int64, int(lastObjNum)+1)
 	for objNum := uint32(1); objNum <= lastObjNum; objNum++ {

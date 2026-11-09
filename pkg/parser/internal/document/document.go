@@ -27,7 +27,13 @@ type Document struct {
 
 // Open parses buf and returns the document (with the parser error code).
 func Open(buf []byte) (*Document, parser.Error) {
+	return OpenWithPassword(buf, "")
+}
+
+// OpenWithPassword parses a document with its user or owner password.
+func OpenWithPassword(buf []byte, password string) (*Document, parser.Error) {
 	p := parser.New()
+	p.SetPassword(password)
 	h := parser.NewHolder(p)
 	d := &Document{Holder: h, prs: p}
 	err := p.StartParse(buf, d)
@@ -200,3 +206,9 @@ func isValidPageObject(obj objects.Object) bool {
 	dict := objects.ToDictionary(obj)
 	return dict != nil && dict.GetNameFor("Type") == "Page"
 }
+
+// IsEncrypted reports whether the source document had an encryption dictionary.
+func (d *Document) IsEncrypted() bool { return d.prs.IsEncrypted() }
+
+// DecryptionError reports a lazy object decryption failure.
+func (d *Document) DecryptionError() error { return d.prs.DecryptionError() }

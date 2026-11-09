@@ -4,6 +4,7 @@
 package parser
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -552,6 +553,15 @@ func (p *Parser) parseIndirectObjectAt(pos int64, objnum uint32) objects.Object 
 	p.syntax.SetPos(saved)
 	if result != nil && objnum != 0 && result.GetObjNum() != objnum {
 		return nil
+	}
+	if result != nil && p.security != nil {
+		var err error
+		result, err = p.security.decryptObject(result)
+		if err != nil {
+			failure := fmt.Errorf("decrypt object %d: %w", objnum, err)
+			p.decryptionErr.CompareAndSwap(nil, &failure)
+			return nil
+		}
 	}
 	return result
 }

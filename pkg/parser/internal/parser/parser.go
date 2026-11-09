@@ -4,6 +4,7 @@ package parser
 
 import (
 	"bytes"
+	"sync/atomic"
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/syntax"
@@ -29,6 +30,9 @@ type ParsedObjectsHolder interface {
 
 // Parser ports CPDF_Parser.
 type Parser struct {
+	password         string
+	security         *securityHandler
+	decryptionErr    atomic.Pointer[error]
 	syntax           *syntax.SyntaxParser
 	objectsHolder    ParsedObjectsHolder
 	hasParsed        bool
@@ -115,17 +119,13 @@ func (p *Parser) getEncryptDict() *objects.Dictionary {
 	return nil
 }
 
-// setEncryptHandler is a Phase-D stub: encryption is unsupported until Phase E,
-// so an /Encrypt entry is a hard failure (no corpus PDF is encrypted).
-func (p *Parser) setEncryptHandler() Error {
-	if p.GetTrailer() == nil {
-		return FormatError
-	}
-	if p.getEncryptDict() != nil {
-		return HandlerError
-	}
-	return Success
-}
+func (p *Parser) setEncryptHandler() Error { return p.initSecurity() }
+
+// SetPassword selects the user or owner password before parsing.
+func (p *Parser) SetPassword(password string) { p.password = password }
+
+// IsEncrypted reports a successfully loaded encryption dictionary.
+func (p *Parser) IsEncrypted() bool { return p.security != nil }
 
 // --- init / version ---
 
@@ -303,4 +303,12 @@ func (p *Parser) loadTrailer() *objects.Dictionary {
 		return nil
 	}
 	return objects.ToDictionary(p.syntax.GetObjectBody(p.objectsHolder))
+}
+
+// DecryptionError reports malformed ciphertext encountered during lazy loading.
+func (p *Parser) DecryptionError() error {
+	if err := p.decryptionErr.Load(); err != nil {
+		return *err
+	}
+	return nil
 }

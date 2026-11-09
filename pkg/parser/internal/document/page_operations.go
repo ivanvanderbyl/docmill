@@ -51,6 +51,11 @@ func WritePageSelections(ctx context.Context, w io.Writer, selections []PageSele
 	if err != nil {
 		return err
 	}
+	for _, selection := range selections {
+		if err := selection.Document.DecryptionError(); err != nil {
+			return err
+		}
+	}
 	trailer := objects.NewDictionary()
 	trailer.SetFor("Size", objects.NewNumberFromInt(int32(len(graph.objects)+1)))
 	trailer.SetFor("Root", objects.NewReference(graph, rootID))

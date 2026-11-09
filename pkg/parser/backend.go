@@ -2,7 +2,6 @@ package parser
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -26,15 +25,7 @@ func NewBackend() docpdf.Backend { return &Backend{} }
 
 // OpenBytes parses data into a Document.
 func (b *Backend) OpenBytes(ctx context.Context, data []byte) (docpdf.Document, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	buf := append([]byte(nil), data...)
-	doc, perr := document.Open(buf)
-	if perr != parser.Success {
-		return nil, parserError(perr)
-	}
-	return &Document{doc: doc}, nil
+	return b.OpenBytesWithPassword(ctx, data, "")
 }
 
 // Close releases the backend (no shared resources).
@@ -70,7 +61,8 @@ func (d *Document) AcroFormValues(ctx context.Context) (map[string]string, error
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return d.doc.AcroFormFieldValues(), nil
+	values := d.doc.AcroFormFieldValues()
+	return values, d.doc.DecryptionError()
 }
 
 // SetAcroFormValues updates terminal AcroForm field values by field name.
@@ -78,7 +70,11 @@ func (d *Document) SetAcroFormValues(ctx context.Context, values map[string]stri
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	return d.doc.SetAcroFormFieldValues(values)
+	count, err := d.doc.SetAcroFormFieldValues(values)
+	if err != nil {
+		return count, err
+	}
+	return count, d.doc.DecryptionError()
 }
 
 // WritePDF serialises the current native document state to w.
@@ -113,6 +109,10 @@ func (p *Page) load() (*pdfpage.Page, geom.Size, error) {
 			return
 		}
 		p.page = pdfpage.LoadPage(dict, p.doc)
+		if err := p.doc.DecryptionError(); err != nil {
+			p.loadErr = err
+			return
+		}
 		p.size = geom.Size{Width: float64(p.page.Width()), Height: float64(p.page.Height())}
 	})
 	return p.page, p.size, p.loadErr
@@ -367,10 +367,10 @@ func (p *Page) RulingSegments(ctx context.Context) ([]docpage.RulingSegment, err
 func parserError(e parser.Error) error {
 	switch e {
 	case parser.PasswordError:
-		return errors.New("native pkg/parser: password required")
+		return ErrPasswordRequired
 	case parser.HandlerError:
-		return errors.New("native pkg/parser: encrypted PDF unsupported (plan 009 Phase E)")
+		return ErrUnsupportedEncryption
 	default:
-		return errors.New("native pkg/parser: failed to parse PDF (FORMAT_ERROR)")
+		return ErrInvalidPDF
 	}
 }
