@@ -91,7 +91,6 @@ func (d *Document) objectsForWrite() (map[uint32]objects.Object, uint32) {
 				continue
 			}
 		}
-		obj.SetObjNum(objNum)
 		out[objNum] = obj
 	}
 	return out, lastObjNum
@@ -213,9 +212,13 @@ func writePDFStream(buf *bytes.Buffer, stream *objects.Stream, visited map[objec
 	acc := objects.NewStreamAcc(stream)
 	acc.LoadAllDataRaw()
 	data := acc.GetSpan()
-	stream.Dict().SetFor("Length", objects.NewNumberFromInt(int32(len(data))))
+	dict := objects.NewDictionary()
+	for _, key := range stream.Dict().GetKeys() {
+		dict.SetFor(key, stream.Dict().GetObjectFor(key))
+	}
+	dict.SetFor("Length", objects.NewNumberFromInt(int32(len(data))))
 
-	writePDFDictionary(buf, stream.Dict(), visited)
+	writePDFDictionary(buf, dict, visited)
 	buf.WriteString("\r\nstream\r\n")
 	buf.Write(data)
 	buf.WriteString("\r\nendstream")

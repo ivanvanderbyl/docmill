@@ -19,9 +19,8 @@ type Document struct {
 	prs      *parser.Parser
 	rootDict *objects.Dictionary
 	pageList []uint32
-	// pageMu guards the lazy page-tree resolution in GetPageDict: the pageList
-	// cache and getNodeType's in-place /Type normalisation of shared page-tree
-	// dictionaries. Pages are extracted from many goroutines at once.
+	// pageMu guards the lazy page-list cache in GetPageDict. Page classification
+	// does not mutate shared dictionaries during concurrent extraction.
 	pageMu sync.Mutex
 }
 
@@ -157,12 +156,10 @@ func getNodeType(dict *objects.Dictionary) int {
 	case "Page":
 		return nodeLeaf
 	}
-	// Malformed node with no /Type: guess from /Kids and normalize in place.
+	// Malformed nodes use /Kids for classification without mutating the source.
 	if dict.KeyExist("Kids") {
-		dict.SetNewNameFor("Type", "Pages")
 		return nodeBranch
 	}
-	dict.SetNewNameFor("Type", "Page")
 	return nodeLeaf
 }
 

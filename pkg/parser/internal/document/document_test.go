@@ -120,10 +120,8 @@ func TestOpenRebuildOnBadXref(t *testing.T) {
 func (d *Document) parserRebuilt() bool { return d.prs.XRefTableRebuilt() }
 
 func TestGetPageDictConcurrent(t *testing.T) {
-	// Page-tree nodes with no /Type force getNodeType to normalise the shared
-	// dictionaries in place, and the root's valid /Count means that only happens
-	// lazily inside GetPageDict — which pkg/pdf's parallel page extraction calls
-	// from many goroutines at once. Run under -race.
+	// Page-tree nodes without /Type must remain readable when the lazy page-list
+	// cache is filled by concurrent callers. Run under -race.
 	pdf := buildPDF([]string{
 		"<< /Type /Catalog /Pages 2 0 R >>",
 		"<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R] /Count 4 >>",
