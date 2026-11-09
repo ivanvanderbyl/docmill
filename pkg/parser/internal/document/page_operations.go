@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
@@ -296,9 +297,7 @@ func (graph *pageGraph) copySelections(ctx context.Context, pagesID uint32, kids
 	}
 	for _, page := range selected {
 		mapping := make(map[objects.Object]uint32)
-		for src, id := range pageMappings[page.document] {
-			mapping[src] = id
-		}
+		maps.Copy(mapping, pageMappings[page.document])
 		mapping[page.source] = page.target.GetObjNum()
 		copier := &pageCopier{ctx: ctx, graph: graph, mapped: mapping, active: make(map[objects.Object]bool), pagesID: pagesID}
 		if err := copier.copyPage(page.target, page.source); err != nil {

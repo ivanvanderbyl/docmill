@@ -272,7 +272,7 @@ func TestSoftMaskMatte(t *testing.T) {
 	s := stream(1, 1, 8, "DeviceRGB", []byte{127, 127, 127})
 	mask := stream(1, 1, 8, "DeviceGray", []byte{128})
 	a := objects.NewArray()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		a.Append(objects.NewNumberFromInt(1))
 	}
 	mask.Dict().SetFor("Matte", a)

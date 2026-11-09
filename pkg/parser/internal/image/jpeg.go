@@ -28,8 +28,8 @@ func decodeJPEG(data []byte, d, resources *objects.Dictionary, w, h int) (*image
 	}
 	if !d.KeyExist("Decode") && d.GetArrayFor("Mask") == nil && cs.name != "icc" {
 		out := image.NewNRGBA(image.Rect(0, 0, w, h))
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				out.Set(x, y, decoded.At(x, y))
 			}
 		}
@@ -39,8 +39,8 @@ func decodeJPEG(data []byte, d, resources *objects.Dictionary, w, h int) (*image
 		return nil, fmt.Errorf("image: indexed JPEG is unsupported")
 	}
 	samples := make([]byte, w*h*cs.components)
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			offset := (y*w + x) * cs.components
 			c := decoded.At(x, y)
 			switch cs.name {
@@ -76,8 +76,8 @@ func decodeRaw(data []byte, d, resources *objects.Dictionary, w, h int) (*image.
 	if err != nil {
 		return nil, err
 	}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			i := im.PixOffset(x, y)
 			alpha := 255 - im.Pix[i]
 			im.Pix[i] = 0

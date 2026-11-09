@@ -76,8 +76,8 @@ func decode(stream *objects.Stream, resources *objects.Dictionary, seen map[*obj
 		if alpha.Bounds() != pixels.Bounds() {
 			return nil, nil, fmt.Errorf("image: soft-mask dimensions differ")
 		}
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
+		for y := range h {
+			for x := range w {
 				i := pixels.PixOffset(x, y)
 				pixels.Pix[i+3] = color.GrayModel.Convert(alpha.At(x, y)).(color.Gray).Y
 			}
@@ -101,8 +101,8 @@ func decode(stream *objects.Stream, resources *objects.Dictionary, seen map[*obj
 			if alpha.Bounds() != pixels.Bounds() {
 				return nil, nil, fmt.Errorf("image: mask dimensions differ")
 			}
-			for y := 0; y < h; y++ {
-				for x := 0; x < w; x++ {
+			for y := range h {
+				for x := range w {
 					pixels.Pix[pixels.PixOffset(x, y)+3] = alpha.NRGBAAt(x, y).A
 				}
 			}
@@ -220,8 +220,8 @@ func decodeSamples(data []byte, d, resources *objects.Dictionary, w, h int) (*im
 	}
 	out := image.NewNRGBA(image.Rect(0, 0, w, h))
 	values := make([]float64, cs.components)
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			transparent := mask != nil
 			for c := 0; c < cs.components; c++ {
 				sample := bits(data[y*row:], (x*cs.components+c)*bpc, bpc)

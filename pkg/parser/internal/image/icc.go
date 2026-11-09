@@ -24,7 +24,7 @@ func iccSpace(profile *objects.Stream) (*space, error) {
 		return nil, fmt.Errorf("image: truncated ICC table")
 	}
 	tags := map[string][]byte{}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		p := 132 + i*12
 		off := uint64(binary.BigEndian.Uint32(data[p+4:]))
 		size := uint64(binary.BigEndian.Uint32(data[p+8:]))
@@ -40,7 +40,7 @@ func iccSpace(profile *objects.Stream) (*space, error) {
 		if len(xyz) < 20 || string(xyz[:4]) != "XYZ " {
 			return nil, fmt.Errorf("image: unsupported ICC LUT profile")
 		}
-		for row := 0; row < 3; row++ {
+		for row := range 3 {
 			matrix[row][c] = fixed(xyz[8+4*row:])
 		}
 		curves[c], err = iccCurve(tags[name+"TRC"])
@@ -50,9 +50,9 @@ func iccSpace(profile *objects.Stream) (*space, error) {
 	}
 	return &space{name: "icc", components: 3, transform: func(v []float64) color.NRGBA {
 		var xyz [3]float64
-		for c := 0; c < 3; c++ {
+		for c := range 3 {
 			linear := curves[c](math.Max(0, math.Min(1, v[c])))
-			for row := 0; row < 3; row++ {
+			for row := range 3 {
 				xyz[row] += matrix[row][c] * linear
 			}
 		}

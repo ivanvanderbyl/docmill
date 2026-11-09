@@ -32,7 +32,7 @@ func removeMatte(pixels *image.NRGBA, matte *objects.Array, d, resources *object
 		if a == 0 {
 			continue
 		}
-		for channel := 0; channel < 3; channel++ {
+		for channel := range 3 {
 			pixels.Pix[i+channel] = unit((float64(pixels.Pix[i+channel])/255 - (1-a)*float64(background[channel])/255) / a)
 		}
 	}
