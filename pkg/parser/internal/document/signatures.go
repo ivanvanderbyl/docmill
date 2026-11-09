@@ -2,6 +2,7 @@ package document
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -51,19 +52,11 @@ func (d *Document) Signatures() ([]Signature, error) {
 	var result []Signature
 	seen := map[*objects.Dictionary]bool{}
 	for _, field := range fields {
-		ft := objects.ToName(formFieldAttr(field, "FT", 0))
-		if ft == nil || ft.GetString() != "Sig" {
-			continue
+		dict, name, e := signatureFieldValue(field)
+		if e != nil {
+			return nil, e
 		}
-		value := formFieldAttr(field, "V", 0)
-		if value == nil || objects.ToNull(value) != nil {
-			continue
-		}
-		dict := objects.ToDictionary(value)
-		if dict == nil {
-			return nil, fmt.Errorf("signature %q: invalid value dictionary", formFieldFullName(field))
-		}
-		if seen[dict] {
+		if dict == nil || seen[dict] {
 			continue
 		}
 		seen[dict] = true
@@ -71,7 +64,7 @@ func (d *Document) Signatures() ([]Signature, error) {
 		if e != nil {
 			return nil, e
 		}
-		sig.FieldName = formFieldFullName(field)
+		sig.FieldName = name
 		result = append(result, sig)
 	}
 	if perms := d.rootDict.GetDictFor("Perms"); perms != nil {
@@ -96,6 +89,67 @@ func (d *Document) Signatures() ([]Signature, error) {
 		}
 	}
 	return result, d.DecryptionError()
+}
+
+const signatureFieldMaxDepth = 64
+
+func signatureFieldValue(field *objects.Dictionary) (*objects.Dictionary, string, error) {
+	chain, err := signatureFieldParents(field)
+	if err != nil {
+		return nil, "", err
+	}
+	ft := objects.ToName(signatureFieldAttribute(chain, "FT"))
+	if ft == nil || ft.GetString() != "Sig" {
+		return nil, "", nil
+	}
+	value := signatureFieldAttribute(chain, "V")
+	if value == nil || objects.ToNull(value) != nil {
+		return nil, "", nil
+	}
+	dict := objects.ToDictionary(value)
+	if dict == nil {
+		return nil, "", fmt.Errorf("signature: invalid value dictionary")
+	}
+	var parts []string
+	for _, c := range slices.Backward(chain) {
+		if name := strings.TrimSpace(c.GetUnicodeTextFor("T")); name != "" {
+			parts = append(parts, name)
+		}
+	}
+	return dict, strings.Join(parts, "."), nil
+}
+
+func signatureFieldParents(field *objects.Dictionary) ([]*objects.Dictionary, error) {
+	var chain []*objects.Dictionary
+	seen := make(map[*objects.Dictionary]bool)
+	for field != nil {
+		if seen[field] {
+			return nil, fmt.Errorf("signatures: cyclic field parent")
+		}
+		if len(chain) > signatureFieldMaxDepth {
+			return nil, fmt.Errorf("signatures: field parent nesting exceeds %d", signatureFieldMaxDepth)
+		}
+		seen[field] = true
+		chain = append(chain, field)
+		parent := field.GetDirectObjectFor("Parent")
+		if parent == nil || objects.ToNull(parent) != nil {
+			break
+		}
+		field = objects.ToDictionary(parent)
+		if field == nil {
+			return nil, fmt.Errorf("signatures: invalid field parent dictionary")
+		}
+	}
+	return chain, nil
+}
+
+func signatureFieldAttribute(chain []*objects.Dictionary, key string) objects.Object {
+	for _, field := range chain {
+		if value := field.GetDirectObjectFor(key); value != nil {
+			return value
+		}
+	}
+	return nil
 }
 
 func (d *Document) signatureFields() ([]*objects.Dictionary, error) {
@@ -126,8 +180,8 @@ func (d *Document) signatureFields() ([]*objects.Dictionary, error) {
 		if next.field == nil || seen[next.field] {
 			continue
 		}
-		if next.depth > 64 {
-			return nil, fmt.Errorf("signatures: field nesting exceeds 64")
+		if next.depth > signatureFieldMaxDepth {
+			return nil, fmt.Errorf("signatures: field nesting exceeds %d", signatureFieldMaxDepth)
 		}
 		seen[next.field] = true
 		out = append(out, next.field)

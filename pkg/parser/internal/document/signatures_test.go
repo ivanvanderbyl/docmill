@@ -188,3 +188,68 @@ func TestPermsSignatureReferencesAreDeduplicated(t *testing.T) {
 	require.Len(t, signatures, 2)
 	require.Equal(t, "approval", signatures[0].FieldName)
 }
+
+func signatureInheritancePDF(depth int, cycle bool) []byte {
+	signatureID := depth + 5
+	bodies := []string{
+		"<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R >>",
+	}
+	for level := range depth + 1 {
+		id := level + 4
+		field := "<<"
+		if level == 0 {
+			field += " /FT /Sig /T (parent)"
+		}
+		if level > 0 {
+			field += fmt.Sprintf(" /Parent %d 0 R", id-1)
+		}
+		if level < depth {
+			field += fmt.Sprintf(" /Kids [%d 0 R]", id+1)
+		} else {
+			field += fmt.Sprintf(" /T (leaf) /V %d 0 R", signatureID)
+		}
+		if cycle && level == 0 {
+			field += fmt.Sprintf(" /Parent %d 0 R", depth+4)
+		}
+		bodies = append(bodies, field+" >>")
+	}
+	bodies = append(bodies, "<< /Type /Sig /Contents <abcd> >>")
+	return buildPDF(bodies, "1 0 R")
+}
+
+func TestSignatureInheritanceBeyondFormValueLimit(t *testing.T) {
+	d, code := Open(signatureInheritancePDF(40, false))
+	require.Equal(t, parser.Success, code)
+	signatures, err := d.Signatures()
+	require.NoError(t, err)
+	require.Len(t, signatures, 1)
+	require.Equal(t, "parent.leaf", signatures[0].FieldName)
+	require.Equal(t, []byte{0xab, 0xcd}, signatures[0].Contents)
+}
+
+func TestSignatureParentCycleFailsClosed(t *testing.T) {
+	d, code := Open(signatureInheritancePDF(3, true))
+	require.Equal(t, parser.Success, code)
+	signatures, err := d.Signatures()
+	require.ErrorContains(t, err, "cyclic field parent")
+	require.Empty(t, signatures)
+}
+
+func TestSignatureInheritanceDepthBoundary(t *testing.T) {
+	for _, depth := range []int{64, 65} {
+		t.Run(fmt.Sprint(depth), func(t *testing.T) {
+			d, code := Open(signatureInheritancePDF(depth, false))
+			require.Equal(t, parser.Success, code)
+			signatures, err := d.Signatures()
+			if depth == 65 {
+				require.ErrorContains(t, err, "nesting exceeds 64")
+				require.Empty(t, signatures)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, signatures, 1)
+		})
+	}
+}
