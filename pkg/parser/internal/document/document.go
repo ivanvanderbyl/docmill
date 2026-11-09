@@ -6,6 +6,7 @@ package document
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/objects"
 	"github.com/ivanvanderbyl/docmill/v2/pkg/parser/internal/parser"
@@ -22,7 +23,8 @@ type Document struct {
 	pageList []uint32
 	// pageMu guards the lazy page-list cache in GetPageDict. Page classification
 	// does not mutate shared dictionaries during concurrent extraction.
-	pageMu sync.Mutex
+	pageMu  sync.Mutex
+	changed atomic.Bool
 }
 
 // Open parses buf and returns the document (with the parser error code).

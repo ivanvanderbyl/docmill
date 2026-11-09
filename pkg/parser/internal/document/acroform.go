@@ -175,6 +175,7 @@ func (d *Document) SetAcroFormFieldValues(values map[string]string) (int, error)
 			continue
 		}
 		setFormFieldValue(field, values[name])
+		d.changed.Store(true)
 		changed++
 	}
 	if len(unknown) > 0 {
