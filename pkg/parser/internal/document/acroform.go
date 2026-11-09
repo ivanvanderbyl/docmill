@@ -383,7 +383,13 @@ func formFieldObjectText(obj objects.Object) string {
 	case *objects.Array:
 		parts := make([]string, 0, value.Len())
 		for i := 0; i < value.Len(); i++ {
-			if text := strings.TrimSpace(formFieldObjectText(value.GetDirectObjectAt(i))); text != "" {
+			child := value.GetDirectObjectAt(i)
+			// Choice field value arrays contain scalar selections. Like
+			// PDFium's CPDF_FormField, never descend into nested value arrays.
+			if objects.ToArray(child) != nil {
+				continue
+			}
+			if text := strings.TrimSpace(formFieldObjectText(child)); text != "" {
 				parts = append(parts, text)
 			}
 		}

@@ -61,6 +61,9 @@ func (d *Document) AcroFormValues(ctx context.Context) (map[string]string, error
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if d == nil || d.doc == nil {
+		return nil, fmt.Errorf("native pkg/parser: nil document")
+	}
 	values := d.doc.AcroFormFieldValues()
 	return values, d.doc.DecryptionError()
 }
@@ -69,6 +72,9 @@ func (d *Document) AcroFormValues(ctx context.Context) (map[string]string, error
 func (d *Document) SetAcroFormValues(ctx context.Context, values map[string]string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
+	}
+	if d == nil || d.doc == nil {
+		return 0, fmt.Errorf("native pkg/parser: nil document")
 	}
 	count, err := d.doc.SetAcroFormFieldValues(values)
 	if err != nil {
@@ -102,6 +108,9 @@ type Page struct {
 
 // load resolves the page dict and builds the native page interpreter result.
 func (p *Page) load() (*pdfpage.Page, geom.Size, error) {
+	if p == nil || p.doc == nil {
+		return nil, geom.Size{}, fmt.Errorf("native pkg/parser: nil page")
+	}
 	p.loadOnce.Do(func() {
 		dict := p.doc.GetPageDict(p.index)
 		if dict == nil {
