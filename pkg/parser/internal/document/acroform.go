@@ -160,6 +160,11 @@ func (d *Document) SetAcroFormFieldValues(values map[string]string) (int, error)
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	for _, name := range names {
+		if field := byName[name]; field != nil && formFieldAttrString(field, "FT") == "Sig" {
+			return 0, fmt.Errorf("cannot set signature field %q as text", name)
+		}
+	}
 
 	var unknown []string
 	changed := 0
