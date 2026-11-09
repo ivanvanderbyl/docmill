@@ -201,6 +201,7 @@ func TestWritePagesPreservesEncodedStreams(t *testing.T) {
 	require.Equal(t, parser.Success, e)
 	var out bytes.Buffer
 	require.NoError(t, d.WritePages(context.Background(), &out, []int{0}))
+	require.True(t, bytes.HasPrefix(out.Bytes(), []byte("%PDF-1.7\r\n%\xA1\xB3\xC5\xD7\r\n")), "binary PDF header marker")
 	copied, e := Open(out.Bytes())
 	require.Equal(t, parser.Success, e)
 	stream := objects.ToStream(copied.GetPageDict(0).GetDirectObjectFor("Contents"))
