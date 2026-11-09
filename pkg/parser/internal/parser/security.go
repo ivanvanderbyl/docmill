@@ -18,7 +18,40 @@ import (
 // Standard security algorithms follow core/fpdfapi/parser/cpdf_security_handler.cpp
 // and cpdf_crypto_handler.cpp at PDFium 6688c576fd851f4159c6fae39396da50939de110
 // (PDF 32000 algorithms 2, 3, 5, and 2.A/2.B).
-var passwordPadding = []byte{0x28, 0xbf, 0x4e, 0x5e, 0x4e, 0x75, 0x8a, 0x41, 0x64, 0, 0x4e, 0x56, 0xff, 0xfa, 1, 8, 0x2e, 0x2e, 0, 0xb6, 0xd0, 0x68, 0x3e, 0x80, 0x2f, 0x0c, 0xa9, 0xfe, 0x64, 0x53, 0x69, 0x7a}
+var passwordPadding = []byte{
+	0x28,
+	0xbf,
+	0x4e,
+	0x5e,
+	0x4e,
+	0x75,
+	0x8a,
+	0x41,
+	0x64,
+	0,
+	0x4e,
+	0x56,
+	0xff,
+	0xfa,
+	1,
+	8,
+	0x2e,
+	0x2e,
+	0,
+	0xb6,
+	0xd0,
+	0x68,
+	0x3e,
+	0x80,
+	0x2f,
+	0x0c,
+	0xa9,
+	0xfe,
+	0x64,
+	0x53,
+	0x69,
+	0x7a,
+}
 
 type securityHandler struct {
 	key           []byte
@@ -47,7 +80,10 @@ func rc4Bytes(key, data []byte) []byte {
 	return out
 }
 
-func md5Bytes(data []byte) []byte { s := md5.Sum(data); return s[:] }
+func md5Bytes(data []byte) []byte {
+	s := md5.Sum(data)
+	return s[:]
+}
 
 func (p *Parser) initSecurity() Error {
 	p.security = nil
@@ -431,7 +467,13 @@ func (h *securityHandler) decryptObjectWithResolver(obj objects.Object, resolve 
 	if obj.GetObjNum() == h.encryptObject {
 		return obj, nil
 	}
-	walker := objectDecryptor{handler: h, number: obj.GetObjNum(), generation: obj.GetGenNum(), visited: make(map[objects.Object]bool), resolve: resolve}
+	walker := objectDecryptor{
+		handler:    h,
+		number:     obj.GetObjNum(),
+		generation: obj.GetGenNum(),
+		visited:    make(map[objects.Object]bool),
+		resolve:    resolve,
+	}
 	return walker.walk(obj)
 }
 

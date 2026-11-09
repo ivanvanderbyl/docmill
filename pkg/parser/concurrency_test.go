@@ -88,10 +88,22 @@ func runConcurrentPDFOperations(t *testing.T, data []byte, shared *parser.Docume
 			_, e = p.TextCells(context.Background())
 			return e
 		},
-		"images":      func(d *parser.Document) error { _, e := d.ExtractImages(context.Background(), nil); return e },
-		"inspection":  func(d *parser.Document) error { _, e := d.HasActiveContent(context.Background()); return e },
-		"attachments": func(d *parser.Document) error { _, e := d.Attachments(context.Background()); return e },
-		"forms":       func(d *parser.Document) error { _, e := d.AcroFormValues(context.Background()); return e },
+		"images": func(d *parser.Document) error {
+			_, e := d.ExtractImages(context.Background(), nil)
+			return e
+		},
+		"inspection": func(d *parser.Document) error {
+			_, e := d.HasActiveContent(context.Background())
+			return e
+		},
+		"attachments": func(d *parser.Document) error {
+			_, e := d.Attachments(context.Background())
+			return e
+		},
+		"forms": func(d *parser.Document) error {
+			_, e := d.AcroFormValues(context.Background())
+			return e
+		},
 		"write": func(d *parser.Document) error {
 			var out bytes.Buffer
 			if err := d.WritePDF(context.Background(), &out); err != nil {

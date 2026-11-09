@@ -29,9 +29,11 @@ func imagePDF(bodies ...string) []byte {
 	fmt.Fprintf(&b, "trailer << /Root 1 0 R /Size %d >>\nstartxref\n%d\n%%%%EOF\n", len(bodies)+1, xref)
 	return b.Bytes()
 }
+
 func imageStream(dict, data string) string {
 	return fmt.Sprintf("<< %s /Length %d >>\nstream\n%s\nendstream", dict, len(data), data)
 }
+
 func TestExtractImagesInheritedNestedAndInline(t *testing.T) {
 	pdf := imagePDF(
 		"<< /Type /Catalog /Pages 2 0 R >>",
@@ -65,6 +67,7 @@ func TestExtractImagesInheritedNestedAndInline(t *testing.T) {
 	_, err = native.ExtractImages(ctx, nil)
 	require.ErrorIs(t, err, context.Canceled)
 }
+
 func TestExtractImagesFailsOnUnsupportedImage(t *testing.T) {
 	pdf := imagePDF("<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /Resources << /XObject << /I 4 0 R >> >> >>", imageStream("/Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray /Filter /JBIG2Decode", "garbage"))
 	d, err := parser.NewBackend().OpenBytes(context.Background(), pdf)

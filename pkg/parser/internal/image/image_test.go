@@ -20,6 +20,7 @@ func stream(w, h, bpc int, cs string, data []byte) *objects.Stream {
 	d.SetNewNameFor("ColorSpace", cs)
 	return objects.NewStreamFromData(data, d)
 }
+
 func TestSamples(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -31,7 +32,12 @@ func TestSamples(t *testing.T) {
 		{"two bit", 2, []byte{0x30, 0xc0}, []uint8{0, 255, 255, 0}},
 		{"four bit", 4, []byte{0x0f, 0xf0}, []uint8{0, 255, 255, 0}},
 		{"eight bit", 8, []byte{0, 255, 255, 0}, []uint8{0, 255, 255, 0}},
-		{"sixteen bit big endian", 16, []byte{0, 0, 255, 255, 255, 255, 0, 0}, []uint8{0, 255, 255, 0}},
+		{
+			"sixteen bit big endian",
+			16,
+			[]byte{0, 0, 255, 255, 255, 255, 0, 0},
+			[]uint8{0, 255, 255, 0},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			im, _, err := Decode(stream(2, 2, tc.bpc, "DeviceGray", tc.data), nil)
@@ -42,6 +48,7 @@ func TestSamples(t *testing.T) {
 		})
 	}
 }
+
 func TestDecodeInversionAndMask(t *testing.T) {
 	s := stream(2, 1, 8, "DeviceRGB", []byte{255, 0, 0, 0, 255, 0})
 	decode := objects.NewArray()
@@ -59,6 +66,7 @@ func TestDecodeInversionAndMask(t *testing.T) {
 	require.Equal(t, color.NRGBA{0, 255, 255, 0}, im.NRGBAAt(0, 0))
 	require.Equal(t, color.NRGBA{255, 0, 255, 255}, im.NRGBAAt(1, 0))
 }
+
 func TestIndexedPalette(t *testing.T) {
 	s := stream(2, 1, 1, "", []byte{0x40})
 	a := objects.NewArray()
@@ -72,6 +80,7 @@ func TestIndexedPalette(t *testing.T) {
 	require.Equal(t, color.NRGBA{255, 0, 0, 255}, im.NRGBAAt(0, 0))
 	require.Equal(t, color.NRGBA{0, 255, 0, 255}, im.NRGBAAt(1, 0))
 }
+
 func TestFlateAndSoftMask(t *testing.T) {
 	var b bytes.Buffer
 	z := zlib.NewWriter(&b)
@@ -86,6 +95,7 @@ func TestFlateAndSoftMask(t *testing.T) {
 	require.Nil(t, raw)
 	require.Equal(t, color.NRGBA{255, 0, 0, 127}, im.NRGBAAt(0, 0))
 }
+
 func TestJPEGPreserved(t *testing.T) {
 	var b bytes.Buffer
 	require.NoError(t, jpeg.Encode(&b, image.NewRGBA(image.Rect(0, 0, 1, 1)), nil))
@@ -95,18 +105,33 @@ func TestJPEGPreserved(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, b.Bytes(), raw)
 }
+
 func TestMalformedImages(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		mutate func(*objects.Stream)
 	}{
-		{"truncated", func(s *objects.Stream) { s.SetData(nil) }},
-		{"oversize", func(s *objects.Stream) { s.Dict().SetFor("Width", objects.NewNumberFromInt(131072)) }},
-		{"bad depth", func(s *objects.Stream) { s.Dict().SetFor("BitsPerComponent", objects.NewNumberFromInt(3)) }},
-		{"bad filter", func(s *objects.Stream) { s.Dict().SetNewNameFor("Filter", "Invalid") }},
-		{"bad compressed bytes", func(s *objects.Stream) { s.Dict().SetNewNameFor("Filter", "FlateDecode") }},
-		{"cyclic mask", func(s *objects.Stream) { s.Dict().SetFor("SMask", s) }},
-		{"unsupported color space", func(s *objects.Stream) { s.Dict().SetNewNameFor("ColorSpace", "Separation") }},
+		{"truncated", func(s *objects.Stream) {
+			s.SetData(nil)
+		}},
+		{"oversize", func(s *objects.Stream) {
+			s.Dict().SetFor("Width", objects.NewNumberFromInt(131072))
+		}},
+		{"bad depth", func(s *objects.Stream) {
+			s.Dict().SetFor("BitsPerComponent", objects.NewNumberFromInt(3))
+		}},
+		{"bad filter", func(s *objects.Stream) {
+			s.Dict().SetNewNameFor("Filter", "Invalid")
+		}},
+		{"bad compressed bytes", func(s *objects.Stream) {
+			s.Dict().SetNewNameFor("Filter", "FlateDecode")
+		}},
+		{"cyclic mask", func(s *objects.Stream) {
+			s.Dict().SetFor("SMask", s)
+		}},
+		{"unsupported color space", func(s *objects.Stream) {
+			s.Dict().SetNewNameFor("ColorSpace", "Separation")
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := stream(1, 1, 8, "DeviceGray", []byte{255})
@@ -116,6 +141,7 @@ func TestMalformedImages(t *testing.T) {
 		})
 	}
 }
+
 func TestInlineBinaryAndStrings(t *testing.T) {
 	// The pixel contains an EI byte sequence; raw length, not a delimiter search,
 	// identifies the end. BI inside a literal string is not an image operator.
@@ -142,6 +168,7 @@ func TestNamedColorSpaceAndCMYK(t *testing.T) {
 	_, _, err = Decode(s, r)
 	require.Error(t, err)
 }
+
 func TestFilteredInlineAndMalformedEnd(t *testing.T) {
 	var b bytes.Buffer
 	z := zlib.NewWriter(&b)
@@ -158,6 +185,7 @@ func TestFilteredInlineAndMalformedEnd(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
 func TestMaskDimensionsAndDecodeLength(t *testing.T) {
 	s := stream(1, 1, 8, "DeviceGray", []byte{255})
 	s.Dict().SetFor("SMask", stream(2, 1, 8, "DeviceGray", []byte{255, 255}))
@@ -208,6 +236,7 @@ func TestGroup3FaxEOL(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint8(255), im.NRGBAAt(7, 0).R)
 }
+
 func TestPNGImagePredictor(t *testing.T) {
 	var b bytes.Buffer
 	z := zlib.NewWriter(&b)
@@ -241,6 +270,7 @@ func TestStencilAndExplicitMask(t *testing.T) {
 	require.Equal(t, color.NRGBA{255, 0, 0, 255}, im.NRGBAAt(0, 0))
 	require.Equal(t, uint8(0), im.NRGBAAt(1, 0).A)
 }
+
 func TestJPEGDecodeArray(t *testing.T) {
 	var b bytes.Buffer
 	src := image.NewGray(image.Rect(0, 0, 1, 1))

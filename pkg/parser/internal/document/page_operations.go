@@ -66,9 +66,14 @@ func WritePageSelections(ctx context.Context, w io.Writer, selections []PageSele
 	return writePDFObjects(w, graph.objects, uint32(len(graph.objects)), version, trailer)
 }
 
-type pageGraph struct{ objects map[uint32]objects.Object }
+type pageGraph struct {
+	objects map[uint32]objects.Object
+}
 
-func (g *pageGraph) GetOrParseIndirectObject(id uint32) objects.Object { return g.objects[id] }
+func (g *pageGraph) GetOrParseIndirectObject(id uint32) objects.Object {
+	return g.objects[id]
+}
+
 func (g *pageGraph) add(obj objects.Object) uint32 {
 	id := uint32(len(g.objects) + 1)
 	obj.SetObjNum(id)
@@ -299,7 +304,13 @@ func (graph *pageGraph) copySelections(ctx context.Context, pagesID uint32, kids
 		mapping := make(map[objects.Object]uint32)
 		maps.Copy(mapping, pageMappings[page.document])
 		mapping[page.source] = page.target.GetObjNum()
-		copier := &pageCopier{ctx: ctx, graph: graph, mapped: mapping, active: make(map[objects.Object]bool), pagesID: pagesID}
+		copier := &pageCopier{
+			ctx:     ctx,
+			graph:   graph,
+			mapped:  mapping,
+			active:  make(map[objects.Object]bool),
+			pagesID: pagesID,
+		}
 		if err := copier.copyPage(page.target, page.source); err != nil {
 			return 0, fmt.Errorf("write pages: page %d: %w", page.index, err)
 		}

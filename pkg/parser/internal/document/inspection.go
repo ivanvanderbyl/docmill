@@ -56,11 +56,10 @@ func inspectObjects(ctx context.Context, root objects.Object, seen map[objects.O
 		case *objects.Stream:
 			stack = append(stack, value.Dict())
 		case *objects.Dictionary:
-			for _, key := range value.GetKeys() {
-				if key == "EmbeddedFiles" || key == "JavaScript" {
-					return true, nil
-				}
-				stack = append(stack, value.GetObjectFor(key))
+			var found bool
+			stack, found = inspectDictionary(value, stack)
+			if found {
+				return true, nil
 			}
 		case *objects.Array:
 			for i := 0; i < value.Len(); i++ {
@@ -69,4 +68,14 @@ func inspectObjects(ctx context.Context, root objects.Object, seen map[objects.O
 		}
 	}
 	return false, nil
+}
+
+func inspectDictionary(value *objects.Dictionary, stack []objects.Object) ([]objects.Object, bool) {
+	for _, key := range value.GetKeys() {
+		if key == "EmbeddedFiles" || key == "JavaScript" {
+			return stack, true
+		}
+		stack = append(stack, value.GetObjectFor(key))
+	}
+	return stack, false
 }

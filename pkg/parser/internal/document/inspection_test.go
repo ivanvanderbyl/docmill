@@ -23,7 +23,12 @@ func TestInspectActiveContent(t *testing.T) {
 		{"stream dictionary", "<< /JavaScript [] /Length 0 >>\nstream\n\nendstream", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bodies := []string{"<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R >>", tc.body}
+			bodies := []string{
+				"<< /Type /Catalog /Pages 2 0 R >>",
+				"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+				"<< /Type /Page /Parent 2 0 R >>",
+				tc.body,
+			}
 			if tc.name == "indirect array" {
 				bodies = append(bodies, "<< /S /Launch >>")
 			}

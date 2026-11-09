@@ -18,7 +18,7 @@ func InlineImages(data []byte, resources *objects.Dictionary) ([]*objects.Stream
 		if word == "" {
 			break
 		}
-		if word == "(" || word == "[" || word == "<<" || word == "<" {
+		if isContentObject(word) {
 			old := p.GetPos()
 			p.GetObjectBody(nil)
 			if p.GetPos() == old {
@@ -30,24 +30,9 @@ func InlineImages(data []byte, resources *objects.Dictionary) ([]*objects.Stream
 		if word != "BI" {
 			continue
 		}
-		dict := objects.NewDictionary()
-		for {
-			key, _ := p.GetNextWord()
-			if key == "ID" {
-				break
-			}
-			if len(key) < 2 || key[0] != '/' {
-				return nil, fmt.Errorf("image: malformed inline dictionary")
-			}
-			value := p.GetObjectBody(nil)
-			if value == nil {
-				return nil, fmt.Errorf("image: invalid inline value")
-			}
-			key = expandKey(key[1:])
-			if key == "ColorSpace" || key == "Filter" {
-				value = expandValue(value)
-			}
-			dict.SetFor(key, value)
+		dict, err := inlineDictionary(p)
+		if err != nil {
+			return nil, err
 		}
 		start := p.GetPos()
 		if start >= len(data) || !isSpace(data[start]) {
@@ -67,34 +52,32 @@ func InlineImages(data []byte, resources *objects.Dictionary) ([]*objects.Stream
 	return out, nil
 }
 
+func inlineDictionary(p *syntax.SyntaxParser) (*objects.Dictionary, error) {
+	dict := objects.NewDictionary()
+	for {
+		key, _ := p.GetNextWord()
+		if key == "ID" {
+			break
+		}
+		if len(key) < 2 || key[0] != '/' {
+			return nil, fmt.Errorf("image: malformed inline dictionary")
+		}
+		value := p.GetObjectBody(nil)
+		if value == nil {
+			return nil, fmt.Errorf("image: invalid inline value")
+		}
+		key = expandKey(key[1:])
+		if key == "ColorSpace" || key == "Filter" {
+			value = expandValue(value)
+		}
+		dict.SetFor(key, value)
+	}
+	return dict, nil
+}
+
 func inlineEnd(data []byte, start int, d, resources *objects.Dictionary) (int, int, error) {
 	if !d.KeyExist("Filter") {
-		components := 1
-		bpc := d.GetIntegerWithDefaultFor("BitsPerComponent", 1)
-		if !d.GetBooleanFor("ImageMask", false) {
-			cs, err := colorSpace(d.GetObjectFor("ColorSpace"), resources, make(map[objects.Object]bool))
-			if err != nil {
-				return 0, 0, err
-			}
-			components = cs.components
-			bpc = d.GetIntegerFor("BitsPerComponent")
-		}
-		w, h := d.GetIntegerFor("Width"), d.GetIntegerFor("Height")
-		if w <= 0 || h <= 0 || w > 131071 || h > 131071 || bpc <= 0 || bpc > 16 {
-			return 0, 0, fmt.Errorf("image: invalid inline dimensions")
-		}
-		length := (uint64(w)*uint64(components)*uint64(bpc) + 7) / 8 * uint64(h)
-		if length > uint64(len(data)-start) {
-			return 0, 0, fmt.Errorf("image: truncated inline image")
-		}
-		end := start + int(length)
-		p := syntax.New(data)
-		p.SetPos(end)
-		word, _ := p.GetNextWord()
-		if word != "EI" {
-			return 0, 0, fmt.Errorf("image: missing inline EI")
-		}
-		return end, p.GetPos(), nil
+		return unfilteredInlineEnd(data, start, d, resources)
 	}
 	// Filtered payloads may contain the bytes EI. Accept a boundary only if the
 	// complete candidate decodes to the declared image dimensions.
@@ -122,7 +105,40 @@ func inlineEnd(data []byte, start int, d, resources *objects.Dictionary) (int, i
 	}
 	return 0, 0, fmt.Errorf("image: invalid or unsupported filtered inline image")
 }
-func isSpace(b byte) bool { return b == 0 || b == 9 || b == 10 || b == 12 || b == 13 || b == 32 }
+
+func unfilteredInlineEnd(data []byte, start int, d, resources *objects.Dictionary) (int, int, error) {
+	components := 1
+	bpc := d.GetIntegerWithDefaultFor("BitsPerComponent", 1)
+	if !d.GetBooleanFor("ImageMask", false) {
+		cs, err := colorSpace(d.GetObjectFor("ColorSpace"), resources, make(map[objects.Object]bool))
+		if err != nil {
+			return 0, 0, err
+		}
+		components = cs.components
+		bpc = d.GetIntegerFor("BitsPerComponent")
+	}
+	w, h := d.GetIntegerFor("Width"), d.GetIntegerFor("Height")
+	if w <= 0 || h <= 0 || w > 131071 || h > 131071 || bpc <= 0 || bpc > 16 {
+		return 0, 0, fmt.Errorf("image: invalid inline dimensions")
+	}
+	length := (uint64(w)*uint64(components)*uint64(bpc) + 7) / 8 * uint64(h)
+	if length > uint64(len(data)-start) {
+		return 0, 0, fmt.Errorf("image: truncated inline image")
+	}
+	end := start + int(length)
+	p := syntax.New(data)
+	p.SetPos(end)
+	word, _ := p.GetNextWord()
+	if word != "EI" {
+		return 0, 0, fmt.Errorf("image: missing inline EI")
+	}
+	return end, p.GetPos(), nil
+}
+
+func isSpace(b byte) bool {
+	return b == 0 || b == 9 || b == 10 || b == 12 || b == 13 || b == 32
+}
+
 func expandKey(k string) string {
 	switch k {
 	case "W":
@@ -146,6 +162,7 @@ func expandKey(k string) string {
 	}
 	return k
 }
+
 func expandValue(o objects.Object) objects.Object {
 	if n := objects.ToName(o); n != nil {
 		switch n.GetString() {
@@ -160,4 +177,13 @@ func expandValue(o objects.Object) objects.Object {
 		}
 	}
 	return o
+}
+
+func isContentObject(word string) bool {
+	switch word {
+	case "(", "[", "<<", "<":
+		return true
+	default:
+		return false
+	}
 }

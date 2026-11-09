@@ -16,22 +16,12 @@ func iccSpace(profile *objects.Stream) (*space, error) {
 	if err != nil || terminal != "" {
 		return nil, fmt.Errorf("image: invalid ICC stream")
 	}
-	if len(data) < 132 || string(data[36:40]) != "acsp" || (string(data[16:20]) != "RGB " && string(data[16:20]) != "GRAY") || string(data[20:24]) != "XYZ " {
+	if !supportedICCHeader(data) {
 		return nil, fmt.Errorf("image: unsupported ICC profile")
 	}
-	count := int(binary.BigEndian.Uint32(data[128:132]))
-	if count > (len(data)-132)/12 {
-		return nil, fmt.Errorf("image: truncated ICC table")
-	}
-	tags := map[string][]byte{}
-	for i := range count {
-		p := 132 + i*12
-		off := uint64(binary.BigEndian.Uint32(data[p+4:]))
-		size := uint64(binary.BigEndian.Uint32(data[p+8:]))
-		if off+size > uint64(len(data)) {
-			return nil, fmt.Errorf("image: truncated ICC tag")
-		}
-		tags[string(data[p:p+4])] = data[off : off+size]
+	tags, err := iccTags(data)
+	if err != nil {
+		return nil, err
 	}
 	if string(data[16:20]) == "GRAY" {
 		curve, e := iccCurve(tags["kTRC"])
@@ -70,16 +60,44 @@ func iccSpace(profile *objects.Stream) (*space, error) {
 		x := 0.9555766*xyz[0] - 0.0230393*xyz[1] + 0.0631636*xyz[2]
 		y := -0.0282895*xyz[0] + 1.0099416*xyz[1] + 0.0210077*xyz[2]
 		z := 0.0122982*xyz[0] - 0.0204830*xyz[1] + 1.3299098*xyz[2]
-		return color.NRGBA{unit(srgbGamma(3.2404542*x - 1.5371385*y - 0.4985314*z)), unit(srgbGamma(-0.969266*x + 1.8760108*y + 0.041556*z)), unit(srgbGamma(0.0556434*x - 0.2040259*y + 1.0572252*z)), 255}
+		return color.NRGBA{
+			unit(srgbGamma(3.2404542*x - 1.5371385*y - 0.4985314*z)),
+			unit(srgbGamma(-0.969266*x + 1.8760108*y + 0.041556*z)),
+			unit(srgbGamma(0.0556434*x - 0.2040259*y + 1.0572252*z)),
+			255,
+		}
 	}}, nil
 }
-func fixed(b []byte) float64 { return float64(int32(binary.BigEndian.Uint32(b))) / 65536 }
+
+func iccTags(data []byte) (map[string][]byte, error) {
+	count := int(binary.BigEndian.Uint32(data[128:132]))
+	if count > (len(data)-132)/12 {
+		return nil, fmt.Errorf("image: truncated ICC table")
+	}
+	tags := map[string][]byte{}
+	for i := range count {
+		p := 132 + i*12
+		off := uint64(binary.BigEndian.Uint32(data[p+4:]))
+		size := uint64(binary.BigEndian.Uint32(data[p+8:]))
+		if off+size > uint64(len(data)) {
+			return nil, fmt.Errorf("image: truncated ICC tag")
+		}
+		tags[string(data[p:p+4])] = data[off : off+size]
+	}
+	return tags, nil
+}
+
+func fixed(b []byte) float64 {
+	return float64(int32(binary.BigEndian.Uint32(b))) / 65536
+}
+
 func srgbGamma(v float64) float64 {
 	if v <= 0.0031308 {
 		return 12.92 * v
 	}
 	return 1.055*math.Pow(v, 1/2.4) - 0.055
 }
+
 func iccCurve(b []byte) (func(float64) float64, error) {
 	if len(b) < 12 {
 		return nil, fmt.Errorf("image: missing ICC tone curve")
@@ -91,11 +109,15 @@ func iccCurve(b []byte) (func(float64) float64, error) {
 			return nil, fmt.Errorf("image: truncated ICC curve")
 		}
 		if n == 0 {
-			return func(v float64) float64 { return v }, nil
+			return func(v float64) float64 {
+				return v
+			}, nil
 		}
 		if n == 1 {
 			g := float64(binary.BigEndian.Uint16(b[12:])) / 256
-			return func(v float64) float64 { return math.Pow(v, g) }, nil
+			return func(v float64) float64 {
+				return math.Pow(v, g)
+			}, nil
 		}
 		return func(v float64) float64 {
 			p := v * float64(n-1)
@@ -146,4 +168,11 @@ func iccCurve(b []byte) (func(float64) float64, error) {
 		}, nil
 	}
 	return nil, fmt.Errorf("image: unsupported ICC tone curve")
+}
+
+func supportedICCHeader(data []byte) bool {
+	if len(data) < 132 || string(data[36:40]) != "acsp" || string(data[20:24]) != "XYZ " {
+		return false
+	}
+	return string(data[16:20]) == "RGB " || string(data[16:20]) == "GRAY"
 }

@@ -179,9 +179,13 @@ func TestWritePagesQPDFValidation(t *testing.T) {
 	require.NoError(t, err, string(log))
 }
 
-type shortPageWriter struct{}
+type shortPageWriter struct {
+}
 
-func (shortPageWriter) Write(p []byte) (int, error) { return len(p) - 1, nil }
+func (shortPageWriter) Write(p []byte) (int, error) {
+	return len(p) - 1, nil
+}
+
 func TestWritePagesShortWriter(t *testing.T) {
 	require.ErrorIs(t, selectionPDF(t).WritePages(context.Background(), shortPageWriter{}, []int{0}), io.ErrShortWrite)
 }

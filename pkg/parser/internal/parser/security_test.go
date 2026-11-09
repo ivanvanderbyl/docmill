@@ -82,7 +82,14 @@ func TestExplicitIdentityStreamFilter(t *testing.T) {
 	dict.SetFor("DecodeParms", params)
 	stream := objects.NewStreamFromData([]byte("already plain encoded stream"), dict)
 	stream.SetObjNum(7)
-	h := &securityHandler{revision: 4, key: []byte("1234567890123456"), aes: true, metadata: true, encryptObject: 99, filterName: "StdCF"}
+	h := &securityHandler{
+		revision:      4,
+		key:           []byte("1234567890123456"),
+		aes:           true,
+		metadata:      true,
+		encryptObject: 99,
+		filterName:    "StdCF",
+	}
 	_, err := h.decryptObject(stream)
 	require.NoError(t, err)
 	acc := objects.NewStreamAcc(stream)

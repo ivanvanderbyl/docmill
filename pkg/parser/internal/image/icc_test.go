@@ -12,7 +12,11 @@ import (
 
 func TestICCMatrixProfile(t *testing.T) {
 	// A D50-adapted sRGB matrix; gamma affects interiors, not these primaries.
-	matrix := [][3]float64{{.4360747, .2225045, .0139322}, {.3850649, .7168786, .0971045}, {.1430804, .0606169, .7141733}}
+	matrix := [][3]float64{
+		{.4360747, .2225045, .0139322},
+		{.3850649, .7168786, .0971045},
+		{.1430804, .0606169, .7141733},
+	}
 	profile := make([]byte, 132+6*12)
 	copy(profile[16:], "RGB ")
 	copy(profile[20:], "XYZ ")
@@ -44,7 +48,12 @@ func TestICCMatrixProfile(t *testing.T) {
 	for _, tc := range []struct {
 		v    []float64
 		want color.NRGBA
-	}{{[]float64{1, 0, 0}, color.NRGBA{255, 0, 0, 255}}, {[]float64{0, 1, 0}, color.NRGBA{0, 255, 0, 255}}, {[]float64{0, 0, 1}, color.NRGBA{0, 0, 255, 255}}, {[]float64{1, 1, 1}, color.NRGBA{255, 255, 255, 255}}} {
+	}{
+		{[]float64{1, 0, 0}, color.NRGBA{255, 0, 0, 255}},
+		{[]float64{0, 1, 0}, color.NRGBA{0, 255, 0, 255}},
+		{[]float64{0, 0, 1}, color.NRGBA{0, 0, 255, 255}},
+		{[]float64{1, 1, 1}, color.NRGBA{255, 255, 255, 255}},
+	} {
 		got := cs.rgb(tc.v)
 		require.InDelta(t, tc.want.R, got.R, 1)
 		require.InDelta(t, tc.want.G, got.G, 1)
@@ -53,6 +62,7 @@ func TestICCMatrixProfile(t *testing.T) {
 	_, err = iccSpace(objects.NewStreamFromSpan(profile[:134]))
 	require.Error(t, err)
 }
+
 func TestICCParametricCurve(t *testing.T) {
 	b := make([]byte, 16)
 	copy(b, "para")

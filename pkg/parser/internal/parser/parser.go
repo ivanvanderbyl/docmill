@@ -56,13 +56,19 @@ func New() *Parser {
 }
 
 // XRefTableRebuilt reports whether the xref had to be reconstructed.
-func (p *Parser) XRefTableRebuilt() bool { return p.xrefTableRebuilt }
+func (p *Parser) XRefTableRebuilt() bool {
+	return p.xrefTableRebuilt
+}
 
 // GetLinearizedHeader returns the linearization header, or nil.
-func (p *Parser) GetLinearizedHeader() *LinearizedHeader { return p.linearized }
+func (p *Parser) GetLinearizedHeader() *LinearizedHeader {
+	return p.linearized
+}
 
 // FileVersion returns the parsed PDF header version encoded as major*10+minor.
-func (p *Parser) FileVersion() int { return p.fileVersion }
+func (p *Parser) FileVersion() int {
+	return p.fileVersion
+}
 
 // --- accessors ---
 
@@ -75,10 +81,14 @@ func (p *Parser) GetLastObjNum() uint32 {
 }
 
 // IsValidObjectNumber reports whether objnum is within the table's range.
-func (p *Parser) IsValidObjectNumber(objnum uint32) bool { return objnum <= p.GetLastObjNum() }
+func (p *Parser) IsValidObjectNumber(objnum uint32) bool {
+	return objnum <= p.GetLastObjNum()
+}
 
 // GetTrailer returns the trailer dictionary.
-func (p *Parser) GetTrailer() *objects.Dictionary { return p.crossRefTable.Trailer() }
+func (p *Parser) GetTrailer() *objects.Dictionary {
+	return p.crossRefTable.Trailer()
+}
 
 // GetRootObjNum returns the /Root object number, or kInvalidObjNum.
 func (p *Parser) GetRootObjNum() uint32 {
@@ -119,13 +129,19 @@ func (p *Parser) getEncryptDict() *objects.Dictionary {
 	return nil
 }
 
-func (p *Parser) setEncryptHandler() Error { return p.initSecurity() }
+func (p *Parser) setEncryptHandler() Error {
+	return p.initSecurity()
+}
 
 // SetPassword selects the user or owner password before parsing.
-func (p *Parser) SetPassword(password string) { p.password = password }
+func (p *Parser) SetPassword(password string) {
+	p.password = password
+}
 
 // IsEncrypted reports a successfully loaded encryption dictionary.
-func (p *Parser) IsEncrypted() bool { return p.security != nil }
+func (p *Parser) IsEncrypted() bool {
+	return p.security != nil
+}
 
 // --- init / version ---
 

@@ -53,7 +53,9 @@ func (d *Document) TryInit() bool {
 }
 
 // GetPageCount returns the number of pages.
-func (d *Document) GetPageCount() int { return len(d.pageList) }
+func (d *Document) GetPageCount() int {
+	return len(d.pageList)
+}
 
 // GetPageDict returns the page dictionary for page index, resolving it via the
 // /Kids leaf traversal (in document order) and caching the object number.
@@ -207,7 +209,11 @@ func isValidPageObject(obj objects.Object) bool {
 }
 
 // IsEncrypted reports whether the source document had an encryption dictionary.
-func (d *Document) IsEncrypted() bool { return d.prs.IsEncrypted() }
+func (d *Document) IsEncrypted() bool {
+	return d.prs.IsEncrypted()
+}
 
 // DecryptionError reports a lazy object decryption failure.
-func (d *Document) DecryptionError() error { return d.prs.DecryptionError() }
+func (d *Document) DecryptionError() error {
+	return d.prs.DecryptionError()
+}

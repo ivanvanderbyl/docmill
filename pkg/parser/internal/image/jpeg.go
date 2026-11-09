@@ -38,6 +38,13 @@ func decodeJPEG(data []byte, d, resources *objects.Dictionary, w, h int) (*image
 	if cs.name == "indexed" {
 		return nil, fmt.Errorf("image: indexed JPEG is unsupported")
 	}
+	samples := jpegSamples(decoded, cs, w, h)
+	copyDict := objects.ToDictionary(d.Clone())
+	copyDict.SetFor("BitsPerComponent", objects.NewNumberFromInt(8))
+	return decodeSamples(samples, copyDict, resources, w, h)
+}
+
+func jpegSamples(decoded image.Image, cs *space, w, h int) []byte {
 	samples := make([]byte, w*h*cs.components)
 	for y := range h {
 		for x := range w {
@@ -55,9 +62,7 @@ func decodeJPEG(data []byte, d, resources *objects.Dictionary, w, h int) (*image
 			}
 		}
 	}
-	copyDict := objects.ToDictionary(d.Clone())
-	copyDict.SetFor("BitsPerComponent", objects.NewNumberFromInt(8))
-	return decodeSamples(samples, copyDict, resources, w, h)
+	return samples
 }
 
 // Standalone stencils have no intrinsic color. Export them with black paint,

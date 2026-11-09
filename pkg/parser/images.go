@@ -51,7 +51,12 @@ func (d *Document) ExtractImages(ctx context.Context, pages []int) ([]ExtractedI
 			return nil, fmt.Errorf("image: page %d dictionary missing", index)
 		}
 		resources := inheritedImageResources(page)
-		c := imageCollector{ctx: ctx, index: index, seen: make(map[*objects.Stream]bool), contentSeen: make(map[objects.Object]bool)}
+		c := imageCollector{
+			ctx:         ctx,
+			index:       index,
+			seen:        make(map[*objects.Stream]bool),
+			contentSeen: make(map[objects.Object]bool),
+		}
 		if err := c.resources(resources, ""); err != nil {
 			return nil, err
 		}
@@ -95,7 +100,9 @@ func (c *imageCollector) resources(resources *objects.Dictionary, prefix string)
 		return fmt.Errorf("image: form nesting exceeds 64")
 	}
 	c.depth++
-	defer func() { c.depth-- }()
+	defer func() {
+		c.depth--
+	}()
 	if resources == nil {
 		return nil
 	}
@@ -194,6 +201,14 @@ func (c *imageCollector) add(s *objects.Stream, resources *objects.Dictionary, n
 		data = buf.Bytes()
 	}
 	size := pixels.Bounds().Size()
-	c.images = append(c.images, ExtractedImage{PageIndex: c.index, ObjectNumber: s.GetObjNum(), Name: name, Format: format, Data: data, Width: size.X, Height: size.Y})
+	c.images = append(c.images, ExtractedImage{
+		PageIndex:    c.index,
+		ObjectNumber: s.GetObjNum(),
+		Name:         name,
+		Format:       format,
+		Data:         data,
+		Width:        size.X,
+		Height:       size.Y,
+	})
 	return nil
 }

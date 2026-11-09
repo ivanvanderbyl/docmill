@@ -18,10 +18,13 @@ import (
 
 // Backend is the native pure-Go pkg/pdf.Backend (plan 009): document loading,
 // page sizing, and text extraction with no cgo or external PDFium dependency.
-type Backend struct{}
+type Backend struct {
+}
 
 // NewBackend returns the native backend.
-func NewBackend() docpdf.Backend { return &Backend{} }
+func NewBackend() docpdf.Backend {
+	return &Backend{}
+}
 
 // OpenBytes parses data into a Document.
 func (b *Backend) OpenBytes(ctx context.Context, data []byte) (docpdf.Document, error) {
@@ -29,7 +32,9 @@ func (b *Backend) OpenBytes(ctx context.Context, data []byte) (docpdf.Document, 
 }
 
 // Close releases the backend (no shared resources).
-func (b *Backend) Close() error { return nil }
+func (b *Backend) Close() error {
+	return nil
+}
 
 // Document wraps the native document.
 type Document struct {
@@ -54,7 +59,9 @@ func (d *Document) Page(ctx context.Context, index int) (docpdf.Page, error) {
 }
 
 // Close releases the document.
-func (d *Document) Close() error { return nil }
+func (d *Document) Close() error {
+	return nil
+}
 
 // AcroFormValues returns every terminal AcroForm field as field name -> value.
 func (d *Document) AcroFormValues(ctx context.Context) (map[string]string, error) {

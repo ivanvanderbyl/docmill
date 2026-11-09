@@ -59,10 +59,30 @@ func TestFormAPIsRejectInvalidHandles(t *testing.T) {
 
 func TestImageAPIsRejectTruncatedData(t *testing.T) {
 	for _, tc := range []struct{ name, dict, payload, want string }{
-		{"short RGB samples", "/ColorSpace /DeviceRGB /BitsPerComponent 8", string([]byte{255, 0}), "truncated samples"},
-		{"truncated Flate", "/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode", string([]byte{0x78, 0x9c}), "truncated samples"},
-		{"truncated JPEG", "/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode", string([]byte{0xff, 0xd8, 0xff}), "invalid JPEG"},
-		{"short inline samples", "", "BI /W 2 /H 2 /BPC 8 /CS /RGB ID X EI", "truncated inline image"},
+		{
+			"short RGB samples",
+			"/ColorSpace /DeviceRGB /BitsPerComponent 8",
+			string([]byte{255, 0}),
+			"truncated samples",
+		},
+		{
+			"truncated Flate",
+			"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode",
+			string([]byte{0x78, 0x9c}),
+			"truncated samples",
+		},
+		{
+			"truncated JPEG",
+			"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode",
+			string([]byte{0xff, 0xd8, 0xff}),
+			"invalid JPEG",
+		},
+		{
+			"short inline samples",
+			"",
+			"BI /W 2 /H 2 /BPC 8 /CS /RGB ID X EI",
+			"truncated inline image",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			page := "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /XObject << /I 4 0 R >> >> >>"
