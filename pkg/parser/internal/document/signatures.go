@@ -37,7 +37,7 @@ func (d *Document) SourceBytes() []byte {
 	return append([]byte(nil), d.source...)
 }
 
-// Signatures inspects signature fields and the catalog certification signature.
+// Signatures inspects signature fields, certification, and usage-rights signatures.
 // Unsigned fields are omitted. This does not authenticate any signature.
 // Reference: fpdfsdk/fpdf_signature.cpp blob 915e3a57070c61a37b87dc01284cc3e51245b338.
 func (d *Document) Signatures() ([]Signature, error) {
@@ -75,19 +75,24 @@ func (d *Document) Signatures() ([]Signature, error) {
 		result = append(result, sig)
 	}
 	if perms := d.rootDict.GetDictFor("Perms"); perms != nil {
-		value := perms.GetDirectObjectFor("DocMDP")
-		if value != nil && objects.ToNull(value) == nil {
+		for _, key := range []string{"DocMDP", "UR", "UR3"} {
+			value := perms.GetDirectObjectFor(key)
+			if value == nil || objects.ToNull(value) != nil {
+				continue
+			}
 			dict := objects.ToDictionary(value)
 			if dict == nil {
-				return nil, fmt.Errorf("signatures: invalid certification dictionary")
+				return nil, fmt.Errorf("signatures: invalid %s signature dictionary", key)
 			}
-			if !seen[dict] {
-				sig, e := readSignature(dict)
-				if e != nil {
-					return nil, e
-				}
-				result = append(result, sig)
+			if seen[dict] {
+				continue
 			}
+			seen[dict] = true
+			sig, e := readSignature(dict)
+			if e != nil {
+				return nil, e
+			}
+			result = append(result, sig)
 		}
 	}
 	return result, d.DecryptionError()

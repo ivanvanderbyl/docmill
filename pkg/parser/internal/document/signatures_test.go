@@ -167,3 +167,24 @@ func TestCompressedSignatureHasNoOriginalStringSpan(t *testing.T) {
 	require.Equal(t, int64(-1), got[0].ContentsStart)
 	require.Equal(t, int64(-1), got[0].ContentsEnd)
 }
+
+func TestUsageRightsSignaturesAreInspected(t *testing.T) {
+	for _, key := range []string{"UR", "UR3"} {
+		t.Run(key, func(t *testing.T) {
+			d, e := Open(buildPDF([]string{"<< /Type /Catalog /Pages 2 0 R /Perms << /" + key + " 4 0 R >> >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R >>", "<< /Type /Sig /Contents <abcd> >>"}, "1 0 R"))
+			require.Equal(t, parser.Success, e)
+			signatures, err := d.Signatures()
+			require.NoError(t, err)
+			require.Len(t, signatures, 1)
+			require.Equal(t, []byte{0xab, 0xcd}, signatures[0].Contents)
+		})
+	}
+}
+func TestPermsSignatureReferencesAreDeduplicated(t *testing.T) {
+	d, e := Open(buildPDF([]string{"<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R] >> /Perms << /DocMDP 4 0 R /UR 4 0 R /UR3 5 0 R >> >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R >>", "<< /Type /Sig /Contents <abcd> >>", "<< /Type /Sig /Contents <ef01> >>", "<< /FT /Sig /T (approval) /V 4 0 R >>"}, "1 0 R"))
+	require.Equal(t, parser.Success, e)
+	signatures, err := d.Signatures()
+	require.NoError(t, err)
+	require.Len(t, signatures, 2)
+	require.Equal(t, "approval", signatures[0].FieldName)
+}

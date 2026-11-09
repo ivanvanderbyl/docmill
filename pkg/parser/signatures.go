@@ -11,7 +11,7 @@ import (
 // time, not a trusted timestamp. Contents includes the PDF string's padding.
 type Signature = document.Signature
 
-// Signatures inspects signed fields and certification signatures. Unsigned
+// Signatures inspects signed fields, certification, and usage-rights signatures. Unsigned
 // fields are omitted. Malformed signature metadata returns an error instead of
 // a partial list. Use verification before trusting any claimed metadata.
 // Saving with WritePDF rewrites the file and does not preserve signatures.
